@@ -14,6 +14,13 @@ export const properties = sqliteTable("properties", {
   enelInstallation: text("enel_installation"),
   /** RGI / código de fornecimento Sabesp */
   sabespCode: text("sabesp_code"),
+  /** YYYY-MM-DD */
+  contractStart: text("contract_start"),
+  /** YYYY-MM-DD */
+  contractEnd: text("contract_end"),
+  rentCents: integer("rent_cents"),
+  /** último lembrete automático enviado (dias antes do fim: 90, 60, 30, 0) */
+  contractReminderStage: integer("contract_reminder_stage"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
@@ -59,7 +66,49 @@ export const notices = sqliteTable("notices", {
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
+export type DocumentKind = "contrato" | "aditivo" | "vistoria" | "outro";
+export type SignatureStatus = "none" | "pending" | "signed" | "refused";
+
+export const documents = sqliteTable("documents", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  propertyId: integer("property_id")
+    .notNull()
+    .references(() => properties.id, { onDelete: "cascade" }),
+  kind: text("kind", { enum: ["contrato", "aditivo", "vistoria", "outro"] }).notNull().default("outro"),
+  title: text("title").notNull(),
+  file: blob("file", { mode: "buffer" }).notNull(),
+  filename: text("filename"),
+  visibleToTenant: integer("visible_to_tenant", { mode: "boolean" }).notNull().default(true),
+  /** token do link que dá acesso só a este documento (/d/<token>) */
+  shareToken: text("share_token").notNull().unique(),
+  signatureStatus: text("signature_status", { enum: ["none", "pending", "signed", "refused"] }).notNull().default("none"),
+  signatureProvider: text("signature_provider"),
+  /** id do documento no serviço de assinatura */
+  signatureRef: text("signature_ref"),
+  tenantSignUrl: text("tenant_sign_url"),
+  ownerSignUrl: text("owner_sign_url"),
+  signedFile: blob("signed_file", { mode: "buffer" }),
+  signedAt: text("signed_at"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const photos = sqliteTable("photos", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  propertyId: integer("property_id")
+    .notNull()
+    .references(() => properties.id, { onDelete: "cascade" }),
+  image: blob("image", { mode: "buffer" }).notNull(),
+  mime: text("mime").notNull(),
+  caption: text("caption"),
+  width: integer("width"),
+  height: integer("height"),
+  position: integer("position").notNull().default(0),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
 export type Property = typeof properties.$inferSelect;
+export type Document = typeof documents.$inferSelect;
+export type Photo = typeof photos.$inferSelect;
 export type Bill = typeof bills.$inferSelect;
 export type Notice = typeof notices.$inferSelect;
 
@@ -75,6 +124,10 @@ export const SCHEMA_SQL = [
     access_token TEXT NOT NULL UNIQUE,
     enel_installation TEXT,
     sabesp_code TEXT,
+    contract_start TEXT,
+    contract_end TEXT,
+    rent_cents INTEGER,
+    contract_reminder_stage INTEGER,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`,
   `CREATE TABLE IF NOT EXISTS bills (
@@ -114,4 +167,44 @@ export const SCHEMA_SQL = [
     source TEXT NOT NULL DEFAULT 'manual',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`,
+  `CREATE TABLE IF NOT EXISTS documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL DEFAULT 'outro',
+    title TEXT NOT NULL,
+    file BLOB NOT NULL,
+    filename TEXT,
+    visible_to_tenant INTEGER NOT NULL DEFAULT 1,
+    share_token TEXT NOT NULL UNIQUE,
+    signature_status TEXT NOT NULL DEFAULT 'none',
+    signature_provider TEXT,
+    signature_ref TEXT,
+    tenant_sign_url TEXT,
+    owner_sign_url TEXT,
+    signed_file BLOB,
+    signed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE INDEX IF NOT EXISTS documents_property_idx ON documents(property_id)`,
+  `CREATE INDEX IF NOT EXISTS documents_signature_idx ON documents(signature_ref)`,
+  `CREATE TABLE IF NOT EXISTS photos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    image BLOB NOT NULL,
+    mime TEXT NOT NULL,
+    caption TEXT,
+    width INTEGER,
+    height INTEGER,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE INDEX IF NOT EXISTS photos_property_idx ON photos(property_id, position)`,
+];
+
+/** Colunas adicionadas depois da primeira versão (bancos já criados recebem via ALTER TABLE) */
+export const ADDED_COLUMNS: { table: string; column: string; type: string }[] = [
+  { table: "properties", column: "contract_start", type: "TEXT" },
+  { table: "properties", column: "contract_end", type: "TEXT" },
+  { table: "properties", column: "rent_cents", type: "INTEGER" },
+  { table: "properties", column: "contract_reminder_stage", type: "INTEGER" },
 ];

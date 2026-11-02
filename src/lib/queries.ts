@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 
 const b = schema.bills;
@@ -85,4 +85,43 @@ export function latestByProvider(bills: BillSummary[]) {
     enel: bills.find((x) => x.provider === "enel") ?? null,
     sabesp: bills.find((x) => x.provider === "sabesp") ?? null,
   };
+}
+
+const d = schema.documents;
+
+/** Documentos do imóvel sem os arquivos */
+export async function documentsForProperty(propertyId: number, opts: { tenantOnly?: boolean } = {}) {
+  const db = await getDb();
+  const rows = await db
+    .select({
+      id: d.id,
+      kind: d.kind,
+      title: d.title,
+      filename: d.filename,
+      visibleToTenant: d.visibleToTenant,
+      shareToken: d.shareToken,
+      signatureStatus: d.signatureStatus,
+      signatureProvider: d.signatureProvider,
+      tenantSignUrl: d.tenantSignUrl,
+      ownerSignUrl: d.ownerSignUrl,
+      signedAt: d.signedAt,
+      hasSignedFile: sql<number>`${d.signedFile} IS NOT NULL`,
+      createdAt: d.createdAt,
+    })
+    .from(d)
+    .where(eq(d.propertyId, propertyId))
+    .orderBy(desc(d.createdAt), desc(d.id));
+  return opts.tenantOnly ? rows.filter((r) => r.visibleToTenant) : rows;
+}
+
+export type DocumentSummary = Awaited<ReturnType<typeof documentsForProperty>>[number];
+
+/** Fotos do imóvel sem a imagem em si */
+export async function photosForProperty(propertyId: number) {
+  const db = await getDb();
+  return db
+    .select({ id: schema.photos.id, caption: schema.photos.caption, width: schema.photos.width, height: schema.photos.height })
+    .from(schema.photos)
+    .where(eq(schema.photos.propertyId, propertyId))
+    .orderBy(asc(schema.photos.position), asc(schema.photos.id));
 }

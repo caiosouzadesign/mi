@@ -5,6 +5,8 @@ import { requireAdmin } from "@/lib/auth";
 import { brDate, monthLabel, whatsappNumber } from "@/lib/format";
 import { billsForProperty, latestByProvider, unassignedBills, unassignedNotices } from "@/lib/queries";
 import { displayStatus } from "@/lib/status";
+import { contractInfo } from "@/lib/contract";
+import { STAGE_LABEL } from "@/lib/documents";
 import { baseUrl } from "@/lib/url";
 import { AdminBillRow } from "@/components/AdminBillRow";
 import { AdminTopbar } from "@/components/AdminTopbar";
@@ -35,12 +37,16 @@ export default async function AdminPage() {
   const awaiting = withBills.flatMap(({ property, bills }) => bills.filter((b) => b.status === "informado").map((b) => ({ property, bill: b })));
   const openCents = allBills.filter((b) => b.status === "pendente").reduce((s, b) => s + (b.amountCents ?? 0), 0);
   const overdueCount = allBills.filter((b) => displayStatus(b) === "vencida").length;
+  const endingCount = properties.filter((p) => {
+    const c = contractInfo(p);
+    return c && c.stage !== "ativo";
+  }).length;
 
   const kpis = [
     { label: "Em aberto", value: <Money cents={openCents} size="md" />, icon: "receipt" as const, tone: "info" },
     { label: "Vencidas", value: overdueCount, icon: "alert" as const, tone: overdueCount ? "bad" : "" },
     { label: "A confirmar", value: awaiting.length, icon: "clock" as const, tone: awaiting.length ? "warn" : "" },
-    { label: "Imóveis", value: properties.length, icon: "home" as const, tone: "" },
+    { label: "Contratos a vencer", value: endingCount, icon: "calendar" as const, tone: endingCount ? "warn" : "" },
   ];
 
   return (
@@ -110,6 +116,7 @@ export default async function AdminPage() {
             const wa = whatsappNumber(property.tenantPhone);
             const waText = `Olá${property.tenantName ? `, ${property.tenantName.split(" ")[0]}` : ""}! Suas contas de água e luz ficam neste link — dá para baixar, copiar o código de barras e ver o histórico: ${link}`;
             const overdue = bills.filter((b) => displayStatus(b) === "vencida").length;
+            const contract = contractInfo(property);
             return (
               <article key={property.id} className="card">
                 <header className="bill-head">
@@ -124,6 +131,11 @@ export default async function AdminPage() {
                     </h3>
                     <p className="small faint">{property.tenantName ?? "Sem inquilino cadastrado"}</p>
                   </div>
+                  {contract && (
+                    <Link href={`/admin/imoveis/${property.id}/contrato`} className={`chip ${contract.stage}`} title={contract.label}>
+                      {contract.stage === "ativo" ? `Contrato até ${brDate(property.contractEnd)}` : contract.daysLeft < 0 ? STAGE_LABEL.vencido : `Contrato: ${contract.daysLeft} dias`}
+                    </Link>
+                  )}
                   <Link className="icon-btn" href={`/admin/imoveis/${property.id}`} aria-label="Detalhes do imóvel">
                     <Icon name="chevron" size={18} />
                   </Link>

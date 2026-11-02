@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { BillCard, PROVIDER_META } from "@/components/BillCard";
-import { Brand } from "@/components/Brand";
 import { ConsumptionChart } from "@/components/ConsumptionChart";
-import { Icon, type IconName } from "@/components/Icon";
+import { Icon } from "@/components/Icon";
 import { Money } from "@/components/Money";
-import { TabBar } from "@/components/TabBar";
 import { consumptionAlert, consumptionDelta } from "@/lib/alerts";
 import { brDate, brl, monthLabel } from "@/lib/format";
-import { billsForProperty, getPropertyByToken, latestByProvider, noticesForProperty, parseNotices, type BillSummary } from "@/lib/queries";
+import Link from "next/link";
+import { contractInfo } from "@/lib/contract";
+import { billsForProperty, documentsForProperty, getPropertyByToken, latestByProvider, noticesForProperty, parseNotices, type BillSummary } from "@/lib/queries";
 import { daysUntil, displayStatus, STATUS_LABEL } from "@/lib/status";
 import { baseUrl } from "@/lib/url";
 import { informPayment } from "./actions";
@@ -58,7 +58,15 @@ export default async function TenantPage({ params }: { params: Promise<{ token: 
   const property = await getPropertyByToken(token);
   if (!property) notFound();
 
-  const [bills, notices, base] = await Promise.all([billsForProperty(property.id), noticesForProperty(property.id), baseUrl()]);
+  const [bills, notices, base, documents] = await Promise.all([
+    billsForProperty(property.id),
+    noticesForProperty(property.id),
+    baseUrl(),
+    documentsForProperty(property.id, { tenantOnly: true }),
+  ]);
+  const contract = contractInfo(property);
+  const contractAlert = contract && contract.stage !== "ativo" ? contract : null;
+  const toSign = documents.filter((d) => d.signatureStatus === "pending" && d.tenantSignUrl);
   const latest = latestByProvider(bills);
   const byProvider = (p: (typeof PROVIDERS)[number]) => bills.filter((b) => b.provider === p);
 
@@ -81,23 +89,9 @@ export default async function TenantPage({ params }: { params: Promise<{ token: 
   const charts = PROVIDERS.filter((p) => byProvider(p).filter((b) => b.consumption != null).length >= 2);
   const hasNotices = notices.length > 0 || billNotices.length > 0;
 
-  const tabs: { id: string; label: string; icon: IconName }[] = [
-    { id: "contas", label: "Contas", icon: "home" },
-    ...(bills.length ? [{ id: "historico", label: "Histórico", icon: "list" as const }] : []),
-    ...(charts.length ? [{ id: "consumo", label: "Consumo", icon: "chart" as const }] : []),
-    ...(hasNotices ? [{ id: "avisos", label: "Avisos", icon: "bell" as const }] : []),
-  ];
 
   return (
     <>
-      <header className="topbar">
-        <Brand subtitle={property.name} />
-        {property.tenantName && (
-          <span className="tile sm" title={property.tenantName} aria-label={property.tenantName}>
-            <span style={{ fontWeight: 650, fontSize: "0.85rem", color: "var(--text)" }}>{property.tenantName.charAt(0).toUpperCase()}</span>
-          </span>
-        )}
-      </header>
 
       <main className="page">
         <section className="intro">
@@ -143,8 +137,34 @@ export default async function TenantPage({ params }: { params: Promise<{ token: 
               </div>
             </section>
 
-            {(overdue.length > 0 || dueSoon.length > 0 || alerts.length > 0) && (
+            {(overdue.length > 0 || dueSoon.length > 0 || alerts.length > 0 || contractAlert || toSign.length > 0) && (
               <section className="stack" aria-label="Alertas">
+                {toSign.map((d) => (
+                  <Link key={`d${d.id}`} href={`/t/${token}/imovel`} className="alert-card" style={{ color: "inherit", textDecoration: "none" }}>
+                    <span className="tile sm info">
+                      <Icon name="pen" size={18} />
+                    </span>
+                    <div className="body grow">
+                      <span className="title">Documento para assinar</span>
+                      <span className="text">{d.title} — toque para ver e assinar.</span>
+                    </div>
+                    <Icon name="chevron" size={18} />
+                  </Link>
+                ))}
+                {contractAlert && (
+                  <Link href={`/t/${token}/imovel`} className={`alert-card ${contractAlert.stage === "atencao" ? "warn" : "bad"}`} style={{ color: "inherit", textDecoration: "none" }}>
+                    <span className={`tile sm ${contractAlert.stage === "atencao" ? "warn" : "bad"}`}>
+                      <Icon name="calendar" size={18} />
+                    </span>
+                    <div className="body grow">
+                      <span className="title">
+                        {contractAlert.daysLeft < 0 ? "Contrato encerrado" : `Contrato termina em ${contractAlert.daysLeft} dia${contractAlert.daysLeft === 1 ? "" : "s"}`}
+                      </span>
+                      <span className="text">{contractAlert.label}. Converse com o proprietário sobre a renovação.</span>
+                    </div>
+                    <Icon name="chevron" size={18} />
+                  </Link>
+                )}
                 {overdue.map((b) => (
                   <div key={`o${b.id}`} className="alert-card bad">
                     <span className="tile sm bad">
@@ -304,7 +324,6 @@ export default async function TenantPage({ params }: { params: Promise<{ token: 
         </div>
       </main>
 
-      {tabs.length > 1 && <TabBar items={tabs} />}
     </>
   );
 }

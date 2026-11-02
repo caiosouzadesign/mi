@@ -10,6 +10,10 @@ function makeDb() {
   const db = drizzle(client, { schema });
   const ready = (async () => {
     for (const statement of schema.SCHEMA_SQL) await client.execute(statement);
+    for (const { table, column, type } of schema.ADDED_COLUMNS) {
+      const info = await client.execute(`PRAGMA table_info(${table})`);
+      if (!info.rows.some((r) => r.name === column)) await client.execute(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+    }
     await client.execute("PRAGMA foreign_keys = ON");
   })();
   return { db, ready };

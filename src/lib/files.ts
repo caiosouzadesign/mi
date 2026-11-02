@@ -6,7 +6,7 @@ export function fileResponse(bytes: Uint8Array, mime: string, filename: string, 
   return new Response(new Uint8Array(bytes), {
     headers: {
       "Content-Type": mime,
-      "Content-Disposition": `${download ? "attachment" : "inline"}; filename="${filename.replace(/[^\w.\-]/g, "_")}"`,
+      "Content-Disposition": `${download ? "attachment" : "inline"}; filename="${asciiFilename(filename)}"`,
       "Cache-Control": "private, max-age=3600",
       "X-Robots-Tag": "noindex",
     },
@@ -15,4 +15,9 @@ export function fileResponse(bytes: Uint8Array, mime: string, filename: string, 
 
 export function pdfResponse(bytes: Uint8Array, filename: string, download: boolean) {
   return fileResponse(bytes, "application/pdf", filename, download);
+}
+
+/** Nome de arquivo seguro para o cabeçalho (sem acentos nem aspas) */
+function asciiFilename(name: string) {
+  return name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w.\- ()]/g, "_");
 }

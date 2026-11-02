@@ -1,6 +1,6 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getDb, schema } from "@/db";
@@ -11,6 +11,9 @@ import { ingestBillPdf } from "@/lib/ingest";
 import { parseBillText, type Provider } from "@/lib/parser";
 import { parseDigitable } from "@/lib/parser/barcode";
 import { newToken } from "@/lib/tokens";
+import { notifyContractEnding } from "@/lib/contract-notify";
+import { refreshSignature, requestSignature } from "@/lib/signature";
+import { baseUrl } from "@/lib/url";
 
 function str(fd: FormData, key: string): string | null {
   const v = String(fd.get(key) ?? "").trim();
@@ -37,7 +40,7 @@ function moneyToCents(v: string | null): number | null {
 
 function refresh() {
   revalidatePath("/admin", "layout");
-  revalidatePath("/t/[token]", "page");
+  revalidatePath("/t/[token]", "layout");
 }
 
 // ---------- sessão ----------
@@ -237,5 +240,199 @@ export async function deleteNotice(id: number) {
   await requireAdmin();
   const db = await getDb();
   await db.delete(schema.notices).where(eq(schema.notices.id, id));
+  refresh();
+}
+
+// ---------- contrato ----------
+
+export async function updateContract(id: number, fd: FormData) {
+  await requireAdmin();
+  const db = await getDb();
+  const [current] = await db.select({ end: schema.properties.contractEnd }).from(schema.properties).where(eq(schema.properties.id, id));
+  const contractEnd = str(fd, "contractEnd");
+  await db
+    .update(schema.properties)
+    .set({
+      contractStart: str(fd, "contractStart"),
+      contractEnd,
+      rentCents: moneyToCents(str(fd, "rent")),
+      // nova data de fim (ex.: renovação) recomeça os lembretes automáticos
+      ...(current?.end !== contractEnd ? { contractReminderStage: null } : {}),
+    })
+    .where(eq(schema.properties.id, id));
+  refresh();
+}
+
+export interface NotifyState {
+  done: boolean;
+  email?: boolean;
+  error?: string;
+}
+
+export async function notifyContract(id: number, _: NotifyState, fd: FormData): Promise<NotifyState> {
+  void fd;
+  await requireAdmin();
+  const db = await getDb();
+  const [property] = await db.select().from(schema.properties).where(eq(schema.properties.id, id));
+  if (!property) return { done: false, error: "Imóvel não encontrado" };
+  try {
+    const { email } = await notifyContractEnding(property, `${await baseUrl()}/t/${property.accessToken}/imovel`);
+    refresh();
+    return { done: true, email };
+  } catch (err) {
+    return { done: false, error: err instanceof Error ? err.message : "Erro ao notificar" };
+  }
+}
+
+// ---------- documentos e assinatura ----------
+
+const MAX_PDF = 10 * 1024 * 1024;
+
+export type ActionResult = string | null;
+
+export async function uploadDocument(propertyId: number, _: ActionResult, fd: FormData): Promise<ActionResult> {
+  await requireAdmin();
+  const file = fd.get("file");
+  if (!(file instanceof File) || file.size === 0) return "Escolha um PDF";
+  if (file.size > MAX_PDF) return "PDF muito grande (máx. 10 MB)";
+  if (file.type && file.type !== "application/pdf") return "Envie um arquivo PDF";
+  const kind = str(fd, "kind");
+  const db = await getDb();
+  const [row] = await db
+    .insert(schema.documents)
+    .values({
+      propertyId,
+      kind: kind === "contrato" || kind === "aditivo" || kind === "vistoria" ? kind : "outro",
+      title: str(fd, "title") ?? file.name.replace(/\.pdf$/i, ""),
+      file: Buffer.from(await file.arrayBuffer()),
+      filename: file.name,
+      visibleToTenant: fd.get("visibleToTenant") === "on",
+      shareToken: newToken(),
+    })
+    .returning({ id: schema.documents.id });
+  let error: ActionResult = null;
+  if (fd.get("sign") === "on") {
+    try {
+      await requestSignature(row.id);
+    } catch (err) {
+      error = `Documento salvo, mas não foi enviado para assinatura: ${err instanceof Error ? err.message : err}`;
+    }
+  }
+  refresh();
+  return error;
+}
+
+export async function sendForSignature(documentId: number): Promise<ActionResult> {
+  await requireAdmin();
+  try {
+    await requestSignature(documentId);
+    refresh();
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : "Erro ao enviar para assinatura";
+  }
+}
+
+export async function refreshDocument(documentId: number): Promise<ActionResult> {
+  await requireAdmin();
+  try {
+    await refreshSignature(documentId);
+    refresh();
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : "Erro ao consultar a assinatura";
+  }
+}
+
+/** Para documentos assinados fora do sistema (papel ou outro serviço) */
+export async function markDocumentSigned(documentId: number, _: ActionResult, fd: FormData): Promise<ActionResult> {
+  await requireAdmin();
+  const file = fd.get("signedFile");
+  const signedFile = file instanceof File && file.size > 0 ? Buffer.from(await file.arrayBuffer()) : undefined;
+  const db = await getDb();
+  await db
+    .update(schema.documents)
+    .set({ signatureStatus: "signed", signedAt: todaySP(), signatureProvider: "manual", ...(signedFile ? { signedFile } : {}) })
+    .where(eq(schema.documents.id, documentId));
+  refresh();
+  return null;
+}
+
+export async function toggleDocumentVisibility(documentId: number) {
+  await requireAdmin();
+  const db = await getDb();
+  const [doc] = await db.select({ v: schema.documents.visibleToTenant }).from(schema.documents).where(eq(schema.documents.id, documentId));
+  if (doc) await db.update(schema.documents).set({ visibleToTenant: !doc.v }).where(eq(schema.documents.id, documentId));
+  refresh();
+}
+
+export async function deleteDocument(documentId: number) {
+  await requireAdmin();
+  const db = await getDb();
+  await db.delete(schema.documents).where(eq(schema.documents.id, documentId));
+  refresh();
+}
+
+// ---------- fotos ----------
+
+const MAX_PHOTO = 4 * 1024 * 1024;
+
+export async function uploadPhotos(propertyId: number, _: ActionResult, fd: FormData): Promise<ActionResult> {
+  await requireAdmin();
+  const files = fd.getAll("photos").filter((f): f is File => f instanceof File && f.size > 0);
+  if (files.length === 0) return "Escolha ao menos uma foto";
+  const dims: { w?: number; h?: number }[] = JSON.parse(String(fd.get("dims") ?? "[]"));
+  const caption = str(fd, "caption");
+  const db = await getDb();
+  const [last] = await db
+    .select({ max: sql<number>`COALESCE(MAX(${schema.photos.position}), 0)` })
+    .from(schema.photos)
+    .where(eq(schema.photos.propertyId, propertyId));
+  let position = last?.max ?? 0;
+  const skipped: string[] = [];
+  for (const [i, file] of files.entries()) {
+    if (!file.type.startsWith("image/") || file.size > MAX_PHOTO) {
+      skipped.push(file.name);
+      continue;
+    }
+    await db.insert(schema.photos).values({
+      propertyId,
+      image: Buffer.from(await file.arrayBuffer()),
+      mime: file.type,
+      caption,
+      width: dims[i]?.w ?? null,
+      height: dims[i]?.h ?? null,
+      position: ++position,
+    });
+  }
+  refresh();
+  return skipped.length ? `Não foram enviadas (não são imagens ou passam de 4 MB): ${skipped.join(", ")}` : null;
+}
+
+export async function updatePhotoCaption(photoId: number, fd: FormData) {
+  await requireAdmin();
+  const db = await getDb();
+  await db.update(schema.photos).set({ caption: str(fd, "caption") }).where(eq(schema.photos.id, photoId));
+  refresh();
+}
+
+/** Coloca a foto em primeiro (ela aparece em destaque para o inquilino) */
+export async function setCoverPhoto(photoId: number) {
+  await requireAdmin();
+  const db = await getDb();
+  const [photo] = await db.select({ propertyId: schema.photos.propertyId }).from(schema.photos).where(eq(schema.photos.id, photoId));
+  if (!photo) return;
+  const [first] = await db
+    .select({ min: sql<number>`COALESCE(MIN(${schema.photos.position}), 0)` })
+    .from(schema.photos)
+    .where(eq(schema.photos.propertyId, photo.propertyId));
+  await db.update(schema.photos).set({ position: (first?.min ?? 0) - 1 }).where(eq(schema.photos.id, photoId));
+  refresh();
+}
+
+export async function deletePhoto(photoId: number) {
+  await requireAdmin();
+  const db = await getDb();
+  await db.delete(schema.photos).where(eq(schema.photos.id, photoId));
   refresh();
 }

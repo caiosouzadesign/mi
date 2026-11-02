@@ -2,6 +2,8 @@
 
 Portal para os inquilinos acessarem as contas de **luz (Enel)** e **água (Sabesp)** dos imóveis que continuam no nome do proprietário — sem que o proprietário precise baixar e mandar cada conta manualmente.
 
+Funciona como a **central do imóvel**: contas, contrato, documentos e fotos em um só lugar.
+
 Cada inquilino recebe **um link próprio** (ex.: `https://seu-site.vercel.app/t/aB3x...`) onde ele pode:
 
 - ver a conta do mês com valor, vencimento e consumo;
@@ -10,9 +12,10 @@ Cada inquilino recebe **um link próprio** (ex.: `https://seu-site.vercel.app/t/
 - ver o **histórico** e a situação de cada mês (a pagar, vencida, pagamento informado, paga);
 - receber **alertas**: conta vencida, vencendo em até 3 dias, **consumo acima da média** (com dica de vazamento no caso da água);
 - ver **avisos** das distribuidoras (os que vêm escritos na conta e os que chegam por e-mail, como interrupção programada) e avisos que você mesmo publicar;
-- informar **"já paguei"**, com comprovante opcional — você confirma no painel.
+- informar **"já paguei"**, com comprovante opcional — você confirma no painel;
+- na aba **Contrato e fotos**: ver e baixar o contrato, quantos dias faltam para o fim (com aviso quando estiver acabando), **assinar documentos digitalmente** pelo celular e ver as **fotos do imóvel** (as da entrega, que servem de referência na vistoria de saída).
 
-O proprietário tem um painel (`/admin`) com todos os imóveis, contas sem imóvel identificado, pagamentos informados e um botão para enviar o link ao inquilino pelo WhatsApp.
+O proprietário tem um painel (`/admin`). Em cada imóvel há as abas **Contas**, **Contrato** (datas, aluguel, documentos, assinatura digital e o botão de avisar o inquilino) e **Fotos**. O painel mostra todos os imóveis, contratos a vencer, contas sem imóvel identificado, pagamentos informados e um botão para enviar o link ao inquilino pelo WhatsApp.
 
 ## Como as contas chegam
 
@@ -77,9 +80,30 @@ Em `/admin` › **Cadastrar imóvel**: nome, inquilino, WhatsApp, **nº da insta
 
 Trocou o inquilino? Na página do imóvel, **Gerar novo link** — o link antigo para de funcionar.
 
+### 6. Contrato, lembretes e assinatura digital (opcional)
+
+**Lembretes de fim de contrato.** Na aba Contrato do imóvel, informe início, fim e aluguel. O inquilino passa a ver o prazo, e recebe avisos automáticos **90, 60 e 30 dias antes e no dia do fim** (no portal, e por e-mail se configurado). Para ligar a rotina diária, cadastre `CRON_SECRET` (qualquer texto aleatório) na Vercel — o agendamento já está em `vercel.json`. A qualquer momento você também pode clicar em **Avisar no portal** ou mandar a mensagem pronta pelo WhatsApp.
+
+**E-mail (opcional).** Crie uma conta em https://resend.com, verifique um domínio e cadastre `RESEND_API_KEY` e `EMAIL_FROM`.
+
+**Assinatura digital — ZapSign.** Funciona como o DocuSign, mas é brasileira, mais barata e tem validade jurídica (MP 2.200-2/2001). O fluxo: você envia o PDF na aba Contrato › o inquilino recebe o link (no portal e por e-mail) › assina pelo celular › o PDF assinado volta sozinho para o sistema.
+1. Crie a conta em https://zapsign.com.br (para testar sem custo: https://sandbox.zapsign.com.br e `ZAPSIGN_SANDBOX=true`).
+2. Em Configurações › Integrações › API, copie o token para `ZAPSIGN_API_TOKEN`.
+3. Em Configurações › Webhooks, cadastre `https://SEU-SITE/api/webhooks/assinatura?secret=SEU_SEGREDO` e coloque o mesmo segredo em `SIGNATURE_WEBHOOK_SECRET`. (Se o webhook falhar, a rotina diária também atualiza as assinaturas pendentes.)
+4. Para assinar junto como locador, preencha `OWNER_NAME` e `OWNER_EMAIL`.
+
+Documentos assinados em papel ou em outro serviço podem ser marcados como **assinados manualmente**, com upload do PDF assinado.
+
+> A integração foi escrita com base no pacote oficial da ZapSign (endpoints `/api/v1/docs/`). Faça o primeiro envio no **sandbox** para confirmar o fluxo de ponta a ponta antes de usar com contratos reais.
+
+## Próxima aba: câmeras
+
+A navegação já está preparada (`src/lib/nav.ts`). A ideia é o proprietário liberar, por imóvel, o acesso às câmeras (por exemplo, a da garagem ou do portão) e o inquilino ver a imagem ao vivo na aba **Câmeras**. O caminho depende das câmeras: modelos com nuvem (Intelbras, Tuya/Smart Life, TP-Link Tapo) costumam permitir compartilhar ou incorporar a imagem; câmeras com RTSP precisam de um conversor para o navegador (ex.: go2rtc em um computador ou roteador da casa). Quando for fazer, me diga a marca/modelo.
+
 ## Segurança
 - Cada inquilino só vê as contas do próprio imóvel; o link usa um token aleatório impossível de adivinhar.
-- O link de compartilhar uma conta (`/f/...`) dá acesso **só àquele PDF**, não ao portal.
+- O link de compartilhar uma conta (`/f/...`) ou um documento (`/d/...`) dá acesso **só àquele PDF**, não ao portal. As fotos só abrem com o link do inquilino daquele imóvel.
+- O webhook de assinatura exige um segredo e, mesmo assim, o status é sempre confirmado direto na API da ZapSign.
 - O painel é protegido por senha; a API de ingestão, por um segredo compartilhado com o Apps Script.
 - As páginas pedem aos buscadores para não serem indexadas.
 
@@ -94,7 +118,7 @@ Trocou o inquilino? Na página do imóvel, **Gerar novo link** — o link antigo
 ```bash
 npm install
 cp .env.example .env.local   # DATABASE_URL=file:local.db já funciona sem Turso
-npm run seed                 # 2 imóveis de demonstração com 6 meses de contas
+npm run seed                 # 2 imóveis de demonstração: contas, contrato, documentos e fotos
 npm run dev                  # http://localhost:3000/admin
 npm test                     # testes do leitor de contas
 ```
@@ -105,5 +129,11 @@ Estrutura:
 - `src/lib/ingest.ts` — importa o PDF, evita duplicadas e liga ao imóvel
 - `src/app/t/[token]` — portal do inquilino
 - `src/app/admin` — painel do proprietário
+- `src/app/t/[token]/imovel` — contrato, documentos e fotos (inquilino)
+- `src/app/admin/imoveis/[id]/{contrato,fotos}` — contrato, assinatura e fotos (painel)
+- `src/lib/contract.ts`, `src/lib/contract-notify.ts` — prazo do contrato e lembretes
+- `src/lib/signature/` — integração com a ZapSign
+- `src/app/api/cron/diario` — rotina diária (lembretes + assinaturas pendentes)
+- `src/app/api/webhooks/assinatura` — retorno da ZapSign
 - `src/app/api/ingest` — recebe contas e avisos do Apps Script
 - `scripts/gmail-apps-script.gs` — leitor do Gmail
