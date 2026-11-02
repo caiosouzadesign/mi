@@ -29,3 +29,16 @@ export function consumptionAlert(points: ConsumptionPoint[]): ConsumptionAlert |
   if (percent >= 25) return { level: "atencao", percent, latest, average };
   return null;
 }
+
+/** Variação (%) do consumo de uma conta em relação à média das até 6 contas anteriores */
+export function consumptionDelta(points: ConsumptionPoint[], referenceMonth: string | null): number | null {
+  if (!referenceMonth) return null;
+  const valid = points
+    .filter((p): p is { referenceMonth: string; consumption: number } => p.consumption != null && !!p.referenceMonth)
+    .sort((a, b) => a.referenceMonth.localeCompare(b.referenceMonth));
+  const index = valid.findIndex((p) => p.referenceMonth === referenceMonth);
+  if (index < 2) return null;
+  const history = valid.slice(Math.max(0, index - 6), index).map((p) => p.consumption);
+  const average = history.reduce((s, v) => s + v, 0) / history.length;
+  return average > 0 ? Math.round(((valid[index].consumption - average) / average) * 100) : null;
+}

@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import "@fontsource-variable/inter/opsz.css";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -11,8 +12,8 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f5f4f1" },
-    { media: "(prefers-color-scheme: dark)", color: "#121211" },
+    { media: "(prefers-color-scheme: light)", color: "#eceef1" },
+    { media: "(prefers-color-scheme: dark)", color: "#0f1012" },
   ],
 };
 

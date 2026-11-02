@@ -2,7 +2,11 @@
 
 import { useFormStatus } from "react-dom";
 
-export function SubmitButton({ children, className = "btn primary", pendingText = "Enviando…" }: {
+export function SubmitButton({
+  children,
+  className = "btn primary",
+  pendingText = "Enviando…",
+}: {
   children: React.ReactNode;
   className?: string;
   pendingText?: string;

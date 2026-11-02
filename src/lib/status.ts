@@ -6,7 +6,7 @@ export type DisplayStatus = BillStatus | "vencida";
 export const STATUS_LABEL: Record<DisplayStatus, string> = {
   pendente: "A pagar",
   vencida: "Vencida",
-  informado: "Pagamento informado",
+  informado: "Em análise",
   pago: "Paga",
 };
 
