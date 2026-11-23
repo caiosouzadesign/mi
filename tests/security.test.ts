@@ -103,3 +103,13 @@ describe("avisos de conta", () => {
     expect(msg).toContain("https://x/t/abc");
   });
 });
+
+describe("configuração do banco", async () => {
+  const { databaseConfig } = await import("@/db");
+  it("aceita os nomes da integração da Turso e recusa arquivo local na Vercel", () => {
+    expect(databaseConfig({ TURSO_DATABASE_URL: "libsql://x.turso.io", TURSO_AUTH_TOKEN: "t" } as unknown as NodeJS.ProcessEnv)).toEqual({ url: "libsql://x.turso.io", authToken: "t" });
+    expect(databaseConfig({ DATABASE_URL: "libsql://a", TURSO_DATABASE_URL: "libsql://b" } as unknown as NodeJS.ProcessEnv).url).toBe("libsql://a");
+    expect(databaseConfig({} as NodeJS.ProcessEnv).url).toBe("file:local.db");
+    expect(() => databaseConfig({ VERCEL: "1" } as unknown as NodeJS.ProcessEnv)).toThrow(/Turso/);
+  });
+});

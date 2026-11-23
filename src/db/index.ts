@@ -2,11 +2,19 @@ import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import * as schema from "./schema";
 
+/** Aceita os nomes do README e os que a integração da Turso na Vercel cria */
+export function databaseConfig(env = process.env) {
+  const url = env.DATABASE_URL || env.TURSO_DATABASE_URL;
+  const authToken = env.DATABASE_AUTH_TOKEN || env.TURSO_AUTH_TOKEN || undefined;
+  if (!url && env.VERCEL) {
+    // na Vercel o disco é temporário: um arquivo local perderia tudo
+    throw new Error("Banco de dados não configurado: conecte a Turso ao projeto na Vercel (Storage) e publique de novo.");
+  }
+  return { url: url || "file:local.db", authToken };
+}
+
 function makeDb() {
-  const client = createClient({
-    url: process.env.DATABASE_URL ?? "file:local.db",
-    authToken: process.env.DATABASE_AUTH_TOKEN || undefined,
-  });
+  const client = createClient(databaseConfig());
   const db = drizzle(client, { schema });
   const ready = (async () => {
     for (const statement of schema.SCHEMA_SQL) await client.execute(statement);
