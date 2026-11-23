@@ -2,9 +2,8 @@ import { mod10, mod11, barcodeToDigitable, formatDigitable } from "@/lib/parser/
 import { PDFDocument, StandardFonts } from "pdf-lib";
 
 /** Monta um código de barras de arrecadação válido (44 dígitos) */
-export function makeBarcode(segment: "2" | "3", valueId: "6" | "8", cents: number, free = "0048123456789012345678901"): string {
+export function makeBarcode(segment: "2" | "3", valueId: "6" | "8", cents: number, free = "0048123456789012345678901", company = "0123"): string {
   const value = String(cents).padStart(11, "0");
-  const company = "0123";
   const without = `8${segment}${valueId}${value}${company}${free}`.slice(0, 43);
   const dv = (valueId === "6" ? mod10 : mod11)(without);
   return `${without.slice(0, 3)}${dv}${without.slice(3)}`;

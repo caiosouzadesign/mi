@@ -52,13 +52,21 @@ export const bills = sqliteTable("bills", {
   receiptFilename: text("receipt_filename"),
   source: text("source").notNull().default("upload"),
   rawText: text("raw_text"),
+  /** quando o inquilino foi avisado da conta nova */
+  notifiedAt: text("notified_at"),
+  /** quando foi enviado o lembrete de vencimento */
+  dueRemindedAt: text("due_reminded_at"),
+  /** motivos para revisar antes de mostrar ao inquilino (null = liberada) */
+  reviewReason: text("review_reason"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
 export const notices = sqliteTable("notices", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  /** null = ainda não atribuído a um imóvel */
+  /** null = ainda não publicado para um imóvel */
   propertyId: integer("property_id").references(() => properties.id, { onDelete: "cascade" }),
+  /** imóvel sugerido pelo nº da instalação no e-mail (o proprietário confirma) */
+  suggestedPropertyId: integer("suggested_property_id"),
   provider: text("provider", { enum: ["enel", "sabesp"] }),
   title: text("title").notNull(),
   body: text("body"),
@@ -104,6 +112,13 @@ export const photos = sqliteTable("photos", {
   height: integer("height"),
   position: integer("position").notNull().default(0),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+/** Tentativas de login com erro, para bloquear adivinhação de senha */
+export const authAttempts = sqliteTable("auth_attempts", {
+  key: text("key").primaryKey(),
+  failures: integer("failures").notNull().default(0),
+  windowStart: integer("window_start").notNull(),
 });
 
 export type Property = typeof properties.$inferSelect;
@@ -154,6 +169,9 @@ export const SCHEMA_SQL = [
     receipt_filename TEXT,
     source TEXT NOT NULL DEFAULT 'upload',
     raw_text TEXT,
+    notified_at TEXT,
+    due_reminded_at TEXT,
+    review_reason TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`,
   `CREATE INDEX IF NOT EXISTS bills_property_idx ON bills(property_id, provider, due_date)`,
@@ -161,6 +179,7 @@ export const SCHEMA_SQL = [
   `CREATE TABLE IF NOT EXISTS notices (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     property_id INTEGER REFERENCES properties(id) ON DELETE CASCADE,
+    suggested_property_id INTEGER,
     provider TEXT,
     title TEXT NOT NULL,
     body TEXT,
@@ -199,6 +218,11 @@ export const SCHEMA_SQL = [
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`,
   `CREATE INDEX IF NOT EXISTS photos_property_idx ON photos(property_id, position)`,
+  `CREATE TABLE IF NOT EXISTS auth_attempts (
+    key TEXT PRIMARY KEY,
+    failures INTEGER NOT NULL DEFAULT 0,
+    window_start INTEGER NOT NULL
+  )`,
 ];
 
 /** Colunas adicionadas depois da primeira versão (bancos já criados recebem via ALTER TABLE) */
@@ -207,4 +231,8 @@ export const ADDED_COLUMNS: { table: string; column: string; type: string }[] = 
   { table: "properties", column: "contract_end", type: "TEXT" },
   { table: "properties", column: "rent_cents", type: "INTEGER" },
   { table: "properties", column: "contract_reminder_stage", type: "INTEGER" },
+  { table: "bills", column: "notified_at", type: "TEXT" },
+  { table: "bills", column: "due_reminded_at", type: "TEXT" },
+  { table: "bills", column: "review_reason", type: "TEXT" },
+  { table: "notices", column: "suggested_property_id", type: "INTEGER" },
 ];

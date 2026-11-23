@@ -101,17 +101,44 @@ Documentos assinados em papel ou em outro serviço podem ser marcados como **ass
 A navegação já está preparada (`src/lib/nav.ts`). A ideia é o proprietário liberar, por imóvel, o acesso às câmeras (por exemplo, a da garagem ou do portão) e o inquilino ver a imagem ao vivo na aba **Câmeras**. O caminho depende das câmeras: modelos com nuvem (Intelbras, Tuya/Smart Life, TP-Link Tapo) costumam permitir compartilhar ou incorporar a imagem; câmeras com RTSP precisam de um conversor para o navegador (ex.: go2rtc em um computador ou roteador da casa). Quando for fazer, me diga a marca/modelo.
 
 ## Segurança
-- Cada inquilino só vê as contas do próprio imóvel; o link usa um token aleatório impossível de adivinhar.
-- O link de compartilhar uma conta (`/f/...`) ou um documento (`/d/...`) dá acesso **só àquele PDF**, não ao portal. As fotos só abrem com o link do inquilino daquele imóvel.
-- O webhook de assinatura exige um segredo e, mesmo assim, o status é sempre confirmado direto na API da ZapSign.
-- O painel é protegido por senha; a API de ingestão, por um segredo compartilhado com o Apps Script.
-- As páginas pedem aos buscadores para não serem indexadas.
+
+### O que o sistema faz para te proteger
+
+**Contra boleto falso** (o golpe mais provável neste tipo de sistema):
+- O leitor do Gmail só importa e-mails **autenticados** (DMARC/DKIM verificados pelo próprio Google) dos domínios oficiais da Enel e da Sabesp. O que não passar ganha o marcador `contas-suspeitas` no Gmail e não entra.
+- Mesmo assim, toda conta que chega por e-mail passa por uma checagem e fica **escondida do inquilino** até você liberar se: for a primeira daquela distribuidora no imóvel; o código da empresa no boleto for diferente das contas anteriores (outro favorecido); o código de barras não for de conta de luz/água; ou o valor for mais de 3× a média. Elas aparecem em **Contas para conferir** no painel.
+- Avisos que chegam por e-mail nunca vão direto para o inquilino: você publica.
+
+**Acesso:**
+- Cada inquilino tem um link com um código aleatório impossível de adivinhar e só vê o próprio imóvel. **Trate o link como uma senha.**
+- **Gerar novo link** (troca de inquilino) invalida o portal antigo **e todos os links de PDF já enviados** (contas e contrato).
+- Painel com senha: **bloqueio de 15 min após 5 erros** por IP e limite global contra ataques de vários IPs; sessão em cookie protegido (HttpOnly, SameSite); **trocar a senha desconecta todas as sessões** na hora. Em produção, o sistema recusa senha com menos de 12 caracteres.
+- Integrações (Gmail, rotina diária, ZapSign) exigem segredos comparados em tempo constante. O status de assinatura é sempre confirmado direto na API da ZapSign, então um aviso forjado não muda nada.
+
+**Arquivos:**
+- O tipo de todo arquivo enviado (comprovante, foto, documento, conta) é identificado pelos bytes, não pelo nome: um HTML/SVG com código disfarçado de "foto" é recusado. Fotos e comprovantes abrem numa caixa de areia (nada executa).
+
+**Navegador:** política de conteúdo (CSP), proteção contra o site ser embutido em outro (clickjacking), HTTPS obrigatório (HSTS), e a URL com o código do inquilino nunca é enviada a outros sites (Referrer-Policy). As páginas não são indexadas por buscadores.
+
+### O que fica com você (checklist)
+- [ ] **Ative a verificação em duas etapas** no GitHub, Vercel, Turso, Google (Gmail/Apps Script), ZapSign e Resend. Quem entrar nessas contas tem acesso a tudo.
+- [ ] Use segredos longos e diferentes: `ADMIN_PASSWORD` (12+ caracteres), `SESSION_SECRET` e `INGEST_SECRET` (32+ caracteres aleatórios, ex.: `openssl rand -base64 32`). Nunca os coloque no código ou no GitHub.
+- [ ] Na troca de inquilino, clique em **Gerar novo link**.
+- [ ] Antes de liberar uma conta em **Contas para conferir**, confira o código de barras no app da Enel/Sabesp.
+- [ ] Se uma conta verdadeira cair em `contas-suspeitas` no Gmail, confira o remetente e adicione o domínio em `DOMINIOS_CONFIAVEIS` no Apps Script.
+- [ ] Ative backups no Turso.
+
+### Riscos conhecidos e aceitos
+- As contas estão no seu nome: o PDF mostra seu nome/CPF/endereço para o inquilino (isso já acontecia ao mandar as contas pelo WhatsApp).
+- O segredo do webhook da ZapSign vai na URL (pode aparecer em logs); por isso o status é sempre reconfirmado na API.
+- A CSP permite scripts inline do próprio Next.js (necessários para o site funcionar); conteúdo de terceiros não é carregado.
 
 ## Limitações e próximos passos
 - **O leitor de PDF foi calibrado com contas de exemplo.** O código de barras e o valor são confiáveis; vencimento, mês de referência e consumo dependem do texto da conta real e podem precisar de ajuste. Mande um PDF real de cada distribuidora (pode tapar dados pessoais) para afinar — depois do ajuste, o botão **Ler o PDF de novo** atualiza as contas já importadas.
 - O **PIX** só é capturado quando o código vem como texto no PDF (se vier só como imagem de QR code, fica de fora por enquanto).
 - A confirmação de pagamento é manual (o inquilino informa, você confirma). Não há integração bancária.
-- Ideias: aviso automático ao inquilino quando a conta chega (e-mail via Resend ou WhatsApp Business), lembrete antes do vencimento, instalar como app (PWA).
+- Com o e-mail (Resend) configurado, o inquilino recebe um e-mail quando a conta chega (depois de liberada, se estava em revisão) e um lembrete 3 dias antes do vencimento. No painel, cada conta em aberto tem um botão de WhatsApp com a mensagem pronta.
+- Ideia futura: instalar o portal como app no celular (PWA).
 
 ## Desenvolvimento local
 

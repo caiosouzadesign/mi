@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { todaySP } from "../format";
+import { isPdf, safeExternalUrl } from "../upload-safety";
 import { createDocument, getDocument, zapsignConfigured, type RemoteDoc } from "./zapsign";
 
 export { zapsignConfigured as signatureConfigured };
@@ -27,9 +28,11 @@ async function applyRemote(documentId: number, remote: RemoteDoc, tenantName: st
   const tenant = remote.signers.find((s) => s.name === tenantName) ?? remote.signers[0];
   const owner = remote.signers.find((s) => s !== tenant);
   let signedFile: Buffer | null = null;
-  if (remote.status === "signed" && remote.signedFileUrl) {
-    const res = await fetch(remote.signedFileUrl);
-    if (res.ok) signedFile = Buffer.from(await res.arrayBuffer());
+  const signedUrl = safeExternalUrl(remote.signedFileUrl);
+  if (remote.status === "signed" && signedUrl?.startsWith("https://")) {
+    const res = await fetch(signedUrl);
+    const bytes = res.ok ? Buffer.from(await res.arrayBuffer()) : null;
+    if (bytes && isPdf(bytes)) signedFile = bytes;
   }
   await db
     .update(schema.documents)
@@ -37,8 +40,8 @@ async function applyRemote(documentId: number, remote: RemoteDoc, tenantName: st
       signatureProvider: "zapsign",
       signatureRef: remote.ref,
       signatureStatus: remote.status,
-      tenantSignUrl: tenant?.signUrl ?? null,
-      ownerSignUrl: owner?.signUrl ?? null,
+      tenantSignUrl: safeExternalUrl(tenant?.signUrl),
+      ownerSignUrl: safeExternalUrl(owner?.signUrl),
       ...(remote.status === "signed" ? { signedAt: todaySP() } : {}),
       ...(signedFile ? { signedFile } : {}),
     })

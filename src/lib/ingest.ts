@@ -1,16 +1,19 @@
 import { createHash } from "node:crypto";
-import { eq, or } from "drizzle-orm";
+import { and, desc, eq, isNull, or } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import type { Property } from "@/db/schema";
 import { normalize, parseBillText, textContainsCode, type Provider } from "./parser";
 import { pdfToText } from "./pdf";
 import { newToken } from "./tokens";
+import { reviewReasons } from "./fraud";
 
 export interface IngestResult {
   status: "created" | "duplicate";
   billId: number;
   propertyId: number | null;
   provider: Provider | null;
+  /** motivos para revisar antes de liberar ao inquilino (vazio = liberada) */
+  review: string[];
 }
 
 /** Descobre a qual imóvel a conta pertence pelo nº da instalação (Enel) ou RGI/fornecimento (Sabesp). */
@@ -49,7 +52,7 @@ export async function ingestBillPdf(
     )
     .limit(1);
   if (existing) {
-    return { status: "duplicate", billId: existing.id, propertyId: existing.propertyId, provider: existing.provider };
+    return { status: "duplicate", billId: existing.id, propertyId: existing.propertyId, provider: existing.provider, review: [] };
   }
 
   let propertyId = opts.propertyId ?? null;
@@ -58,6 +61,25 @@ export async function ingestBillPdf(
       .select({ id: schema.properties.id, enelInstallation: schema.properties.enelInstallation, sabespCode: schema.properties.sabespCode })
       .from(schema.properties);
     propertyId = matchProperty(text, provider, all);
+  }
+
+  // contas que chegam por e-mail passam pela checagem de boleto falso; o upload
+  // manual é do próprio proprietário
+  let review: string[] = [];
+  if (opts.source === "email" && propertyId) {
+    const history = await db
+      .select({ digitable: schema.bills.digitable, amountCents: schema.bills.amountCents })
+      .from(schema.bills)
+      .where(
+        and(
+          eq(schema.bills.propertyId, propertyId),
+          provider ? eq(schema.bills.provider, provider) : isNull(schema.bills.provider),
+          isNull(schema.bills.reviewReason),
+        ),
+      )
+      .orderBy(desc(schema.bills.id))
+      .limit(6);
+    review = reviewReasons({ provider, digitable: parsed.digitable, amountCents: parsed.amountCents }, history);
   }
 
   const [row] = await db
@@ -79,10 +101,11 @@ export async function ingestBillPdf(
       shareToken: newToken(),
       source: opts.source,
       rawText: text.slice(0, 50_000),
+      reviewReason: review.length ? review.join(" · ") : null,
     })
     .returning({ id: schema.bills.id });
 
-  return { status: "created", billId: row.id, propertyId, provider };
+  return { status: "created", billId: row.id, propertyId, provider, review };
 }
 
 export function providerFromSender(...parts: (string | null | undefined)[]): Provider | null {
@@ -100,10 +123,11 @@ export async function ingestNotice(input: { from?: string; subject: string; body
   const all = await db
     .select({ id: schema.properties.id, enelInstallation: schema.properties.enelInstallation, sabespCode: schema.properties.sabespCode })
     .from(schema.properties);
-  const propertyId = matchProperty(`${input.subject}\n${body}`, provider, all);
+  const suggestedPropertyId = matchProperty(`${input.subject}\n${body}`, provider, all);
+  // avisos de e-mail nunca aparecem direto para o inquilino: o proprietário publica
   const [row] = await db
     .insert(schema.notices)
-    .values({ propertyId, provider, title: input.subject.slice(0, 200), body, source: "email" })
+    .values({ propertyId: null, suggestedPropertyId, provider, title: input.subject.slice(0, 200), body, source: "email" })
     .returning({ id: schema.notices.id });
-  return { noticeId: row.id, propertyId, provider };
+  return { noticeId: row.id, suggestedPropertyId, provider };
 }

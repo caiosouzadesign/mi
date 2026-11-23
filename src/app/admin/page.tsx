@@ -3,7 +3,7 @@ import { desc } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { requireAdmin } from "@/lib/auth";
 import { brDate, monthLabel, whatsappNumber } from "@/lib/format";
-import { billsForProperty, latestByProvider, unassignedBills, unassignedNotices } from "@/lib/queries";
+import { billsForProperty, billsInReview, latestByProvider, unassignedBills, unassignedNotices } from "@/lib/queries";
 import { displayStatus } from "@/lib/status";
 import { contractInfo } from "@/lib/contract";
 import { STAGE_LABEL } from "@/lib/documents";
@@ -17,8 +17,10 @@ import { Money } from "@/components/Money";
 import { PropertyFields } from "@/components/PropertyFields";
 import { StatusButtons } from "@/components/StatusButtons";
 import { SubmitButton } from "@/components/SubmitButton";
-import { assignBill, assignNotice, createProperty, deleteNotice } from "./actions";
+import { approveBill, assignBill, assignNotice, createProperty, deleteBill, deleteNotice } from "./actions";
 import { UploadForm } from "./UploadForm";
+import { emailConfigured } from "@/lib/notify";
+import { billWhatsappLink } from "@/lib/whatsapp";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Painel · Contas do Imóvel" };
@@ -26,16 +28,17 @@ export const metadata = { title: "Painel · Contas do Imóvel" };
 export default async function AdminPage() {
   await requireAdmin();
   const db = await getDb();
-  const [properties, orphanBills, orphanNotices, base] = await Promise.all([
+  const [properties, orphanBills, orphanNotices, base, inReview] = await Promise.all([
     db.select().from(schema.properties).orderBy(desc(schema.properties.id)),
     unassignedBills(),
     unassignedNotices(),
     baseUrl(),
+    billsInReview(),
   ]);
   const withBills = await Promise.all(properties.map(async (p) => ({ property: p, bills: await billsForProperty(p.id) })));
   const allBills = withBills.flatMap((w) => w.bills);
   const awaiting = withBills.flatMap(({ property, bills }) => bills.filter((b) => b.status === "informado").map((b) => ({ property, bill: b })));
-  const openCents = allBills.filter((b) => b.status === "pendente").reduce((s, b) => s + (b.amountCents ?? 0), 0);
+  const openCents = allBills.filter((b) => b.status === "pendente" && !b.reviewReason).reduce((s, b) => s + (b.amountCents ?? 0), 0);
   const overdueCount = allBills.filter((b) => displayStatus(b) === "vencida").length;
   const endingCount = properties.filter((p) => {
     const c = contractInfo(p);
@@ -73,6 +76,57 @@ export default async function AdminPage() {
             </div>
           ))}
         </section>
+
+        {inReview.length > 0 && (
+          <section className="card" style={{ borderColor: "color-mix(in srgb, var(--bad) 35%, transparent)" }}>
+            <div className="row between">
+              <div className="stack-sm">
+                <h2>Contas para conferir</h2>
+                <p className="small muted">
+                  Chegaram por e-mail com algum sinal de alerta e estão <strong>escondidas do inquilino</strong> até você liberar. Abra o PDF e
+                  confira o código de barras no app da Enel/Sabesp antes.
+                </p>
+              </div>
+              <span className="chip vencida">{inReview.length}</span>
+            </div>
+            <div className="list">
+              {inReview.map((b) => (
+                <div key={b.id} className="bill-line" style={{ alignItems: "flex-start" }}>
+                  <span className="tile sm bad">
+                    <Icon name="alert" size={17} />
+                  </span>
+                  <div className="meta">
+                    <Link href={`/admin/contas/${b.id}`} style={{ color: "var(--text)", fontWeight: 600 }}>
+                      {b.propertyName} <span className="light">· {b.provider ? PROVIDER_META[b.provider].title : "Conta"} {monthLabel(b.referenceMonth)}</span>
+                    </Link>
+                    <span className="small" style={{ color: "var(--bad)" }}>
+                      {b.reviewReason}
+                    </span>
+                  </div>
+                  <Money cents={b.amountCents} size="sm" />
+                  <div className="row" style={{ gap: 6 }}>
+                    <a className="btn sm" href={`/f/${b.shareToken}`} target="_blank" rel="noopener noreferrer">
+                      <Icon name="eye" size={16} />
+                      Ver PDF
+                    </a>
+                    <form action={approveBill.bind(null, b.id)}>
+                      <button className="btn sm primary" type="submit">
+                        <Icon name="check" size={16} />
+                        Liberar
+                      </button>
+                    </form>
+                    <form action={deleteBill.bind(null, b.id)}>
+                      <button className="btn sm ghost danger" type="submit">
+                        <Icon name="trash" size={16} />
+                        Excluir
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {awaiting.length > 0 && (
           <section className="card">
@@ -144,7 +198,7 @@ export default async function AdminPage() {
                 <div className="list">
                   {(["enel", "sabesp"] as const).map((prov) =>
                     latest[prov] ? (
-                      <AdminBillRow key={prov} bill={latest[prov]} />
+                      <AdminBillRow key={prov} bill={latest[prov]} whatsapp={billWhatsappLink(latest[prov], property, base)} />
                     ) : (
                       <div key={prov} className="bill-line">
                         <span className={`tile sm ${prov}`}>
@@ -228,7 +282,10 @@ export default async function AdminPage() {
 
         {orphanNotices.length > 0 && (
           <section className="card">
-            <h2>Avisos recebidos por e-mail</h2>
+            <div className="stack-sm">
+              <h2>Avisos recebidos por e-mail</h2>
+              <p className="small muted">Só aparecem para o inquilino depois que você publica.</p>
+            </div>
             <div className="list">
               {orphanNotices.map((n) => (
                 <div key={n.id} className="list-row" style={{ alignItems: "flex-start", flexWrap: "wrap" }}>
@@ -242,7 +299,7 @@ export default async function AdminPage() {
                   </div>
                   <div className="row" style={{ flexWrap: "nowrap" }}>
                     <form action={assignNotice.bind(null, n.id)} className="row" style={{ flexWrap: "nowrap" }}>
-                      <select name="propertyId" required style={{ minWidth: 150, minHeight: 36, padding: "6px 34px 6px 12px" }}>
+                      <select name="propertyId" required defaultValue={n.suggestedPropertyId ?? ""} style={{ minWidth: 150, minHeight: 36, padding: "6px 34px 6px 12px" }}>
                         <option value="">Mostrar para…</option>
                         {properties.map((p) => (
                           <option key={p.id} value={p.id}>
@@ -270,7 +327,7 @@ export default async function AdminPage() {
               <h2>Enviar contas</h2>
               <p className="small muted">Com o Gmail configurado (veja o README) as contas chegam sozinhas. Use aqui para importar manualmente.</p>
             </div>
-            <UploadForm properties={properties.map((p) => ({ id: p.id, name: p.name }))} />
+            <UploadForm properties={properties.map((p) => ({ id: p.id, name: p.name }))} emailEnabled={emailConfigured()} />
           </section>
 
           <section className="card">

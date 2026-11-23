@@ -1,30 +1,51 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
-import { cookies } from "next/headers";
+import { createHmac } from "node:crypto";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { safeEqual } from "./crypto";
 
 const COOKIE = "admin_session";
 const MAX_AGE = 60 * 60 * 24 * 30; // 30 dias
 
-function secret(): string {
-  const s = process.env.SESSION_SECRET;
-  if (!s) throw new Error("Defina SESSION_SECRET nas variáveis de ambiente");
-  return s;
+/** Em produção, recusa configurações fracas em vez de funcionar inseguro */
+export function configProblem(env = process.env): string | null {
+  if (!env.ADMIN_PASSWORD) return "Defina ADMIN_PASSWORD nas variáveis de ambiente";
+  if (!env.SESSION_SECRET) return "Defina SESSION_SECRET nas variáveis de ambiente";
+  if (env.NODE_ENV === "production") {
+    if (env.ADMIN_PASSWORD.length < 12) return "A senha do painel (ADMIN_PASSWORD) precisa ter pelo menos 12 caracteres";
+    if (env.SESSION_SECRET.length < 32) return "SESSION_SECRET precisa ter pelo menos 32 caracteres aleatórios";
+  }
+  return null;
+}
+
+/**
+ * A chave da sessão depende da senha: trocar ADMIN_PASSWORD (ou SESSION_SECRET)
+ * derruba na hora todas as sessões abertas, inclusive de um celular perdido.
+ */
+function sessionKey(): string {
+  const problem = configProblem();
+  if (problem) throw new Error(problem);
+  return createHmac("sha256", process.env.SESSION_SECRET!).update(`sessao:${process.env.ADMIN_PASSWORD}`).digest("hex");
 }
 
 function sign(payload: string): string {
-  return createHmac("sha256", secret()).update(payload).digest("base64url");
-}
-
-function safeEqual(a: string, b: string): boolean {
-  const ab = Buffer.from(a);
-  const bb = Buffer.from(b);
-  return ab.length === bb.length && timingSafeEqual(ab, bb);
+  return createHmac("sha256", sessionKey()).update(payload).digest("base64url");
 }
 
 export function checkPassword(password: string): boolean {
-  const expected = process.env.ADMIN_PASSWORD;
-  if (!expected) throw new Error("Defina ADMIN_PASSWORD nas variáveis de ambiente");
-  return safeEqual(sign(password), sign(expected));
+  const key = sessionKey();
+  // compara os HMACs (mesmo tamanho) para não vazar nada por tempo de resposta
+  const mac = (v: string) => createHmac("sha256", key).update(`senha:${v}`).digest("hex");
+  return safeEqual(mac(password), mac(process.env.ADMIN_PASSWORD!));
+}
+
+/**
+ * IP de quem está tentando entrar. Na Vercel esses cabeçalhos são preenchidos
+ * pela própria plataforma; fora dela podem ser forjados, mas o limite global
+ * de tentativas continua valendo.
+ */
+export async function clientIp(): Promise<string> {
+  const h = await headers();
+  return h.get("x-real-ip") || h.get("x-forwarded-for")?.split(",")[0]?.trim() || "desconhecido";
 }
 
 export async function startSession() {
@@ -45,7 +66,7 @@ export async function endSession() {
 
 export async function isAdmin(): Promise<boolean> {
   const value = (await cookies()).get(COOKIE)?.value;
-  if (!value) return false;
+  if (!value || configProblem()) return false;
   const [role, expires, sig] = value.split(".");
   if (role !== "admin" || !expires || !sig) return false;
   if (!safeEqual(sig, sign(`${role}.${expires}`))) return false;

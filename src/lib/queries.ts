@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 
 const b = schema.bills;
@@ -22,6 +22,7 @@ export const billSummary = {
   paymentNote: b.paymentNote,
   receiptFilename: b.receiptFilename,
   source: b.source,
+  reviewReason: b.reviewReason,
   createdAt: b.createdAt,
 };
 
@@ -35,13 +36,25 @@ export async function getPropertyByToken(token: string) {
   return property ?? null;
 }
 
-export async function billsForProperty(propertyId: number): Promise<BillSummary[]> {
+/** Contas do imóvel; para o inquilino, só as liberadas (fora da revisão anti-fraude) */
+export async function billsForProperty(propertyId: number, opts: { tenant?: boolean } = {}): Promise<BillSummary[]> {
   const db = await getDb();
   return db
     .select(billSummary)
     .from(b)
-    .where(eq(b.propertyId, propertyId))
+    .where(opts.tenant ? and(eq(b.propertyId, propertyId), isNull(b.reviewReason)) : eq(b.propertyId, propertyId))
     .orderBy(desc(b.referenceMonth), desc(b.dueDate), desc(b.id));
+}
+
+/** Contas que chegaram por e-mail com algum sinal de alerta */
+export async function billsInReview() {
+  const db = await getDb();
+  return db
+    .select({ ...billSummary, propertyName: schema.properties.name })
+    .from(b)
+    .innerJoin(schema.properties, eq(b.propertyId, schema.properties.id))
+    .where(isNotNull(b.reviewReason))
+    .orderBy(desc(b.id));
 }
 
 export async function unassignedBills(): Promise<BillSummary[]> {

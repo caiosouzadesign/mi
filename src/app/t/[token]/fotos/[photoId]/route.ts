@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { getDb, schema } from "@/db";
+import { fileResponse } from "@/lib/files";
 import { getPropertyByToken } from "@/lib/queries";
 
 /** Foto do imóvel; só abre com o link do inquilino daquele imóvel */
@@ -9,11 +10,9 @@ export async function GET(_: Request, { params }: { params: Promise<{ token: str
   if (!property) return new Response("Não encontrado", { status: 404 });
   const db = await getDb();
   const [photo] = await db
-    .select({ image: schema.photos.image, mime: schema.photos.mime })
+    .select({ image: schema.photos.image, caption: schema.photos.caption })
     .from(schema.photos)
     .where(and(eq(schema.photos.id, Number(photoId)), eq(schema.photos.propertyId, property.id)));
   if (!photo) return new Response("Não encontrado", { status: 404 });
-  return new Response(new Uint8Array(photo.image), {
-    headers: { "Content-Type": photo.mime, "Cache-Control": "private, max-age=86400", "X-Robots-Tag": "noindex" },
-  });
+  return fileResponse(photo.image, `${photo.caption ?? "foto"}`, false, "private, max-age=86400");
 }

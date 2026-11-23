@@ -5,6 +5,7 @@ import { requireAdmin } from "@/lib/auth";
 import { brDate, whatsappNumber } from "@/lib/format";
 import { billsForProperty, noticesForProperty } from "@/lib/queries";
 import { baseUrl } from "@/lib/url";
+import { billWhatsappLink } from "@/lib/whatsapp";
 import { AdminBillRow } from "@/components/AdminBillRow";
 import { PROVIDER_META } from "@/components/BillCard";
 import { CopyButton } from "@/components/CopyButton";
@@ -60,7 +61,7 @@ export default async function PropertyPage({ params }: { params: Promise<{ id: s
           ) : (
             <div className="list">
               {bills.map((b) => (
-                <AdminBillRow key={b.id} bill={b} showConsumption />
+                <AdminBillRow key={b.id} bill={b} showConsumption whatsapp={billWhatsappLink(b, property, base)} />
               ))}
             </div>
           )}
@@ -132,7 +133,7 @@ export default async function PropertyPage({ params }: { params: Promise<{ id: s
             <form action={regenerateLink.bind(null, id)}>
               <button className="btn sm ghost" type="submit">
                 <Icon name="refresh" size={16} />
-                Gerar novo link (invalida o atual)
+                Gerar novo link (invalida o atual e os PDFs já enviados)
               </button>
             </form>
             <form action={deleteProperty.bind(null, id)}>

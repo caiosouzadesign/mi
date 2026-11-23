@@ -7,13 +7,14 @@ import { brDate, monthLabel } from "@/lib/format";
 import { billSummary, parseNotices } from "@/lib/queries";
 import { formatDigitable } from "@/lib/parser/barcode";
 import { displayStatus, STATUS_LABEL } from "@/lib/status";
+import { ActionForm } from "@/components/ActionForm";
 import { AdminTopbar } from "@/components/AdminTopbar";
 import { PROVIDER_META } from "@/components/BillCard";
 import { Icon } from "@/components/Icon";
 import { Money } from "@/components/Money";
 import { StatusButtons } from "@/components/StatusButtons";
 import { SubmitButton } from "@/components/SubmitButton";
-import { deleteBill, reparseBill, updateBill } from "../../actions";
+import { approveBill, deleteBill, reparseBill, updateBill } from "../../actions";
 
 export const dynamic = "force-dynamic";
 
@@ -55,6 +56,23 @@ export default async function BillPage({ params }: { params: Promise<{ id: strin
             <span className={`chip ${status}`}>{STATUS_LABEL[status]}</span>
           </header>
           <Money cents={bill.amountCents} size="lg" />
+          {bill.reviewReason && (
+            <div className="alert-card bad">
+              <span className="tile sm bad">
+                <Icon name="alert" size={18} />
+              </span>
+              <div className="body grow">
+                <span className="title">Escondida do inquilino até você conferir</span>
+                <span className="text">{bill.reviewReason}. Confira o código de barras no app da distribuidora antes de liberar.</span>
+              </div>
+              <form action={approveBill.bind(null, bill.id)}>
+                <button className="btn sm primary" type="submit">
+                  <Icon name="check" size={16} />
+                  Liberar
+                </button>
+              </form>
+            </div>
+          )}
           {bill.paidAt && (
             <div className="inset small muted">
               {bill.status === "pago" ? "Paga" : "Pagamento informado"} em {brDate(bill.paidAt)}
@@ -89,7 +107,7 @@ export default async function BillPage({ params }: { params: Promise<{ id: strin
               </button>
             </form>
           </div>
-          <form action={updateBill.bind(null, bill.id)} className="stack" style={{ gap: 18 }}>
+          <ActionForm action={updateBill.bind(null, bill.id)} className="stack" style={{ gap: 18 }}>
             <div className="form-grid">
               <label className="field">
                 Imóvel
@@ -138,7 +156,7 @@ export default async function BillPage({ params }: { params: Promise<{ id: strin
             <SubmitButton className="btn primary" pendingText="Salvando…">
               Salvar
             </SubmitButton>
-          </form>
+          </ActionForm>
         </section>
 
         {notices.length > 0 && (

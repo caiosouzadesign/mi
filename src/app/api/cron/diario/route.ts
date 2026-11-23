@@ -1,21 +1,25 @@
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/db";
+import { sendDueReminders } from "@/lib/bill-notify";
 import { sendDueContractReminders } from "@/lib/contract-notify";
 import { refreshSignature, signatureConfigured } from "@/lib/signature";
 import { baseUrl } from "@/lib/url";
+import { bearerMatches } from "@/lib/crypto";
 
 /**
- * Rotina diária (Vercel Cron, ver vercel.json): lembretes de fim de contrato e
- * atualização das assinaturas pendentes, caso algum webhook se perca.
+ * Rotina diária (Vercel Cron, ver vercel.json): lembretes de vencimento das
+ * contas, lembretes de fim de contrato e atualização das assinaturas
+ * pendentes, caso algum webhook se perca.
  */
 export const maxDuration = 60;
 
 export async function GET(request: Request) {
-  const secret = process.env.CRON_SECRET;
-  if (!secret || request.headers.get("authorization") !== `Bearer ${secret}`) {
+  if (!bearerMatches(request, process.env.CRON_SECRET)) {
     return Response.json({ error: "não autorizado" }, { status: 401 });
   }
-  const reminders = await sendDueContractReminders(await baseUrl());
+  const base = await baseUrl();
+  const reminders = await sendDueContractReminders(base);
+  const dueReminders = await sendDueReminders(base);
   let signatures = 0;
   if (signatureConfigured()) {
     const db = await getDb();
@@ -29,5 +33,5 @@ export async function GET(request: Request) {
       }
     }
   }
-  return Response.json({ reminders, signatures });
+  return Response.json({ reminders, dueReminders, signatures });
 }

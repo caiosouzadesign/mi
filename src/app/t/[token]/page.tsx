@@ -59,7 +59,7 @@ export default async function TenantPage({ params }: { params: Promise<{ token: 
   if (!property) notFound();
 
   const [bills, notices, base, documents] = await Promise.all([
-    billsForProperty(property.id),
+    billsForProperty(property.id, { tenant: true }),
     noticesForProperty(property.id),
     baseUrl(),
     documentsForProperty(property.id, { tenantOnly: true }),

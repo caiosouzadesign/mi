@@ -20,7 +20,7 @@ interface Props {
   /** variação do consumo em relação à média dos meses anteriores, em % */
   consumptionDelta?: number | null;
   /** server action já vinculada a esta conta; ausente = sem botão "Já paguei" */
-  onInformPayment?: (formData: FormData) => Promise<void>;
+  onInformPayment?: (prev: string | null, formData: FormData) => Promise<string | null>;
 }
 
 function dueInfo(bill: BillSummary) {

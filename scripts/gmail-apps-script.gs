@@ -14,10 +14,15 @@
 const SITE_URL = "https://SEU-SITE.vercel.app"; // sem barra no final
 const INGEST_SECRET = "cole-aqui-o-INGEST_SECRET";
 
-// Ajuste se as contas chegarem de outros remetentes
+// Domínios oficiais. Só e-mails AUTENTICADOS (DMARC/DKIM) desses domínios são
+// importados. Se uma conta verdadeira cair no marcador "contas-suspeitas",
+// confira o remetente e acrescente o domínio dele aqui.
+const DOMINIOS_CONFIAVEIS = ["enel.com", "enel.com.br", "enelbrasil.com.br", "sabesp.com.br"];
+
 const QUERY =
-  "(from:enel.com OR from:sabesp.com.br OR from:enel OR from:sabesp) newer_than:60d -label:contas-processadas";
+  "(from:enel.com OR from:enel.com.br OR from:enelbrasil.com.br OR from:sabesp.com.br) newer_than:60d -label:contas-processadas -label:contas-suspeitas";
 const LABEL = "contas-processadas";
+const LABEL_SUSPEITO = "contas-suspeitas";
 
 function instalar() {
   ScriptApp.getProjectTriggers().forEach((t) => ScriptApp.deleteTrigger(t));
@@ -27,11 +32,19 @@ function instalar() {
 
 function processarEmails() {
   const label = GmailApp.getUserLabelByName(LABEL) || GmailApp.createLabel(LABEL);
+  const suspeito = GmailApp.getUserLabelByName(LABEL_SUSPEITO) || GmailApp.createLabel(LABEL_SUSPEITO);
   const threads = GmailApp.search(QUERY, 0, 30);
 
   threads.forEach((thread) => {
     let ok = true;
+    let suspeita = false;
     thread.getMessages().forEach((msg) => {
+      // golpistas imitam o nome "Enel"/"Sabesp" no remetente: exige autenticação do Google
+      if (!remetenteAutenticado(msg)) {
+        suspeita = true;
+        console.log("ignorado (remetente não autenticado):", msg.getFrom(), msg.getSubject());
+        return;
+      }
       const pdfs = msg.getAttachments().filter((a) => /pdf/i.test(a.getContentType()) || /\.pdf$/i.test(a.getName()));
       if (pdfs.length > 0) {
         pdfs.forEach((pdf) => {
@@ -54,9 +67,40 @@ function processarEmails() {
           }) && ok;
       }
     });
+    if (suspeita) thread.addLabel(suspeito);
     // só marca como processado se tudo deu certo; senão tenta de novo na próxima hora
-    if (ok) thread.addLabel(label);
+    else if (ok) thread.addLabel(label);
   });
+}
+
+/** Domínio do remetente visível ("Fulano <contas@enel.com>" -> "enel.com") */
+function dominioDoRemetente(from) {
+  const m = String(from || "").match(/@([A-Za-z0-9.-]+)>?\s*$/);
+  return m ? m[1].toLowerCase() : "";
+}
+
+function dominioConfiavel(dominio) {
+  return DOMINIOS_CONFIAVEIS.some((d) => dominio === d || dominio.endsWith("." + d));
+}
+
+/**
+ * Usa o resultado da verificação que o próprio Gmail grava no cabeçalho
+ * Authentication-Results: DMARC aprovado para o domínio do remetente, ou DKIM
+ * aprovado assinado pelo mesmo domínio.
+ */
+function remetenteAutenticado(msg) {
+  const dominio = dominioDoRemetente(msg.getFrom());
+  if (!dominioConfiavel(dominio)) return false;
+  const raw = msg.getRawContent();
+  const cabecalhos = raw.slice(0, raw.search(/\r?\n\r?\n/));
+  // só vale o PRIMEIRO Authentication-Results (o do topo, gravado pelo Gmail na
+  // chegada); cabeçalhos iguais mais abaixo podem ter sido forjados pelo remetente
+  const linha = (cabecalhos.replace(/\r?\n[ \t]+/g, " ").match(/^Authentication-Results:.*$/im) || [""])[0];
+  if (!/^Authentication-Results:\s*mx\.google\.com/i.test(linha)) return false;
+  const dmarc = linha.match(/dmarc=pass[^;]*header\.from=([A-Za-z0-9.-]+)/i);
+  if (dmarc && dmarc[1].toLowerCase() === dominio) return true;
+  const dkim = linha.match(/dkim=pass[^;]*header\.(?:i|d)=@?([A-Za-z0-9.-]+)/i);
+  return !!(dkim && (dkim[1].toLowerCase() === dominio || dominio.endsWith("." + dkim[1].toLowerCase())));
 }
 
 function pareceAviso(assunto) {

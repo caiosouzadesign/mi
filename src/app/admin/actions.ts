@@ -5,13 +5,16 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getDb, schema } from "@/db";
 import type { BillStatus } from "@/db/schema";
-import { checkPassword, endSession, requireAdmin, startSession } from "@/lib/auth";
+import { checkPassword, clientIp, configProblem, endSession, requireAdmin, startSession } from "@/lib/auth";
+import { clearLoginFailures, loginAllowed, recordLoginFailure } from "@/lib/rate-limit";
 import { todaySP } from "@/lib/format";
 import { ingestBillPdf } from "@/lib/ingest";
 import { parseBillText, type Provider } from "@/lib/parser";
 import { parseDigitable } from "@/lib/parser/barcode";
 import { newToken } from "@/lib/tokens";
+import { isPdf, sniffImage } from "@/lib/upload-safety";
 import { notifyContractEnding } from "@/lib/contract-notify";
+import { notifyNewBill } from "@/lib/bill-notify";
 import { refreshSignature, requestSignature } from "@/lib/signature";
 import { baseUrl } from "@/lib/url";
 
@@ -46,7 +49,16 @@ function refresh() {
 // ---------- sessão ----------
 
 export async function login(_: string | null, fd: FormData): Promise<string | null> {
-  if (!checkPassword(String(fd.get("password") ?? ""))) return "Senha incorreta";
+  const problem = configProblem();
+  if (problem) return problem;
+  const ip = await clientIp();
+  const gate = await loginAllowed(ip);
+  if (!gate.allowed) return `Muitas tentativas. Tente de novo em ${Math.ceil(gate.retryAfterMs / 60_000)} min.`;
+  if (!checkPassword(String(fd.get("password") ?? "").slice(0, 256))) {
+    await recordLoginFailure(ip);
+    return "Senha incorreta";
+  }
+  await clearLoginFailures(ip);
   await startSession();
   redirect("/admin");
 }
@@ -88,11 +100,18 @@ export async function updateProperty(id: number, fd: FormData) {
   refresh();
 }
 
-/** Gera um link novo; o anterior para de funcionar (ex.: troca de inquilino) */
+/**
+ * Gera um link novo (ex.: troca de inquilino). O link anterior do portal e todos
+ * os links de PDF já compartilhados (contas e documentos) param de funcionar.
+ */
 export async function regenerateLink(id: number) {
   await requireAdmin();
   const db = await getDb();
   await db.update(schema.properties).set({ accessToken: newToken() }).where(eq(schema.properties.id, id));
+  const bills = await db.select({ id: schema.bills.id }).from(schema.bills).where(eq(schema.bills.propertyId, id));
+  for (const b of bills) await db.update(schema.bills).set({ shareToken: newToken() }).where(eq(schema.bills.id, b.id));
+  const docs = await db.select({ id: schema.documents.id }).from(schema.documents).where(eq(schema.documents.propertyId, id));
+  for (const d of docs) await db.update(schema.documents).set({ shareToken: newToken() }).where(eq(schema.documents.id, d.id));
   refresh();
 }
 
@@ -114,17 +133,21 @@ export async function uploadBills(_: UploadState, fd: FormData): Promise<UploadS
   await requireAdmin();
   const propertyId = intOrNull(str(fd, "propertyId"));
   const forcedProvider = provider(fd);
+  const notify = fd.get("notify") === "on";
+  const base = await baseUrl();
   const files = fd.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
   const results: UploadState["results"] = [];
   for (const file of files) {
     try {
-      if (file.type && file.type !== "application/pdf") throw new Error("não é PDF");
-      const r = await ingestBillPdf(new Uint8Array(await file.arrayBuffer()), {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (!isPdf(bytes)) throw new Error("não é PDF");
+      const r = await ingestBillPdf(bytes, {
         filename: file.name,
         source: "upload",
         propertyId,
         provider: forcedProvider,
       });
+      const emailed = notify && r.status === "created" && r.propertyId ? await notifyNewBill(r.billId, base) : false;
       results.push({
         filename: file.name,
         ok: true,
@@ -133,7 +156,7 @@ export async function uploadBills(_: UploadState, fd: FormData): Promise<UploadS
           r.status === "duplicate"
             ? "já estava cadastrada"
             : r.propertyId
-              ? "importada"
+              ? `importada${emailed ? " e inquilino avisado por e-mail" : ""}`
               : "importada, mas sem imóvel identificado — atribua manualmente",
       });
     } catch (err) {
@@ -144,11 +167,11 @@ export async function uploadBills(_: UploadState, fd: FormData): Promise<UploadS
   return { results };
 }
 
-export async function updateBill(id: number, fd: FormData) {
+export async function updateBill(id: number, _: string | null, fd: FormData): Promise<string | null> {
   await requireAdmin();
   const digitableInput = str(fd, "digitable");
   const digitable = digitableInput ? digitableInput.replace(/\D/g, "") : null;
-  if (digitable && !parseDigitable(digitable)) throw new Error("Linha digitável inválida (confira os 48 dígitos)");
+  if (digitable && !parseDigitable(digitable)) return "Linha digitável inválida (confira os 48 dígitos)";
   const consumption = str(fd, "consumption");
   const db = await getDb();
   await db
@@ -166,6 +189,7 @@ export async function updateBill(id: number, fd: FormData) {
     })
     .where(eq(schema.bills.id, id));
   refresh();
+  return null;
 }
 
 export async function setBillStatus(id: number, status: BillStatus) {
@@ -181,7 +205,19 @@ export async function setBillStatus(id: number, status: BillStatus) {
 export async function assignBill(id: number, fd: FormData) {
   await requireAdmin();
   const db = await getDb();
-  await db.update(schema.bills).set({ propertyId: intOrNull(str(fd, "propertyId")) }).where(eq(schema.bills.id, id));
+  const propertyId = intOrNull(str(fd, "propertyId"));
+  // atribuir manualmente é a conferência do proprietário: a conta fica liberada
+  await db.update(schema.bills).set({ propertyId, reviewReason: null }).where(eq(schema.bills.id, id));
+  if (propertyId) await notifyNewBill(id, await baseUrl());
+  refresh();
+}
+
+/** Libera para o inquilino uma conta que estava em revisão anti-fraude */
+export async function approveBill(id: number) {
+  await requireAdmin();
+  const db = await getDb();
+  await db.update(schema.bills).set({ reviewReason: null }).where(eq(schema.bills.id, id));
+  await notifyNewBill(id, await baseUrl());
   refresh();
 }
 
@@ -295,7 +331,8 @@ export async function uploadDocument(propertyId: number, _: ActionResult, fd: Fo
   const file = fd.get("file");
   if (!(file instanceof File) || file.size === 0) return "Escolha um PDF";
   if (file.size > MAX_PDF) return "PDF muito grande (máx. 10 MB)";
-  if (file.type && file.type !== "application/pdf") return "Envie um arquivo PDF";
+  const bytes = Buffer.from(await file.arrayBuffer());
+  if (!isPdf(bytes)) return "Envie um arquivo PDF";
   const kind = str(fd, "kind");
   const db = await getDb();
   const [row] = await db
@@ -304,8 +341,8 @@ export async function uploadDocument(propertyId: number, _: ActionResult, fd: Fo
       propertyId,
       kind: kind === "contrato" || kind === "aditivo" || kind === "vistoria" ? kind : "outro",
       title: str(fd, "title") ?? file.name.replace(/\.pdf$/i, ""),
-      file: Buffer.from(await file.arrayBuffer()),
-      filename: file.name,
+      file: bytes,
+      filename: file.name.slice(0, 120),
       visibleToTenant: fd.get("visibleToTenant") === "on",
       shareToken: newToken(),
     })
@@ -349,6 +386,7 @@ export async function markDocumentSigned(documentId: number, _: ActionResult, fd
   await requireAdmin();
   const file = fd.get("signedFile");
   const signedFile = file instanceof File && file.size > 0 ? Buffer.from(await file.arrayBuffer()) : undefined;
+  if (signedFile && (signedFile.length > MAX_PDF || !isPdf(signedFile))) return "Envie o documento assinado em PDF (máx. 10 MB)";
   const db = await getDb();
   await db
     .update(schema.documents)
@@ -391,14 +429,16 @@ export async function uploadPhotos(propertyId: number, _: ActionResult, fd: Form
   let position = last?.max ?? 0;
   const skipped: string[] = [];
   for (const [i, file] of files.entries()) {
-    if (!file.type.startsWith("image/") || file.size > MAX_PHOTO) {
+    const image = Buffer.from(await file.arrayBuffer());
+    const mime = file.size <= MAX_PHOTO ? sniffImage(image) : null;
+    if (!mime) {
       skipped.push(file.name);
       continue;
     }
     await db.insert(schema.photos).values({
       propertyId,
-      image: Buffer.from(await file.arrayBuffer()),
-      mime: file.type,
+      image,
+      mime,
       caption,
       width: dims[i]?.w ?? null,
       height: dims[i]?.h ?? null,

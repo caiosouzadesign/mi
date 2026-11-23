@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { safeEqual } from "@/lib/crypto";
 import { refreshSignatureByRef } from "@/lib/signature";
 import { documentRefs } from "@/lib/signature/webhook";
 
@@ -13,9 +13,7 @@ function authorized(request: Request) {
   const expected = process.env.SIGNATURE_WEBHOOK_SECRET;
   const got = new URL(request.url).searchParams.get("secret") ?? "";
   if (!expected) return false;
-  const a = Buffer.from(got);
-  const b = Buffer.from(expected);
-  return a.length === b.length && timingSafeEqual(a, b);
+  return safeEqual(got, expected);
 }
 
 export async function POST(request: Request) {

@@ -6,7 +6,7 @@ import { uploadBills, type UploadState } from "./actions";
 import { Icon } from "@/components/Icon";
 import { SubmitButton } from "@/components/SubmitButton";
 
-export function UploadForm({ properties }: { properties: { id: number; name: string }[] }) {
+export function UploadForm({ properties, emailEnabled }: { properties: { id: number; name: string }[]; emailEnabled: boolean }) {
   const [state, action] = useActionState(uploadBills, { results: [] } as UploadState);
   const [files, setFiles] = useState<File[]>([]);
   const [over, setOver] = useState(false);
@@ -66,6 +66,10 @@ export function UploadForm({ properties }: { properties: { id: number; name: str
           </select>
         </label>
       </div>
+      <label className="row small" style={{ gap: 10, opacity: emailEnabled ? 1 : 0.55 }} title={emailEnabled ? undefined : "Configure o e-mail (Resend) para habilitar"}>
+        <input type="checkbox" name="notify" defaultChecked={emailEnabled} disabled={!emailEnabled} style={{ width: 18, minHeight: 18 }} />
+        Avisar o inquilino por e-mail{emailEnabled ? "" : " (e-mail não configurado)"}
+      </label>
       <SubmitButton className="btn primary" pendingText="Lendo PDFs…">
         Importar contas
       </SubmitButton>
