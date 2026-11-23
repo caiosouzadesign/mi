@@ -3,10 +3,11 @@ import { ingestBillPdf, ingestNotice, providerFromSender } from "@/lib/ingest";
 import { baseUrl } from "@/lib/url";
 import { bearerMatches } from "@/lib/crypto";
 import { isPdf } from "@/lib/upload-safety";
+import { GMAIL_LAST_RUN, GMAIL_LAST_SEEN, setState, type GmailRun } from "@/lib/app-state";
 
 /**
  * Recebe contas e avisos do Google Apps Script que lê o Gmail do proprietário
- * (scripts/gmail-apps-script.gs).
+ * (gerado em src/lib/gmail-script.ts e entregue na página Conectar Gmail do painel).
  */
 export const maxDuration = 60;
 
@@ -15,7 +16,8 @@ const MAX_BODY = 15 * 1024 * 1024;
 
 type Payload =
   | { type: "bill"; filename?: string; contentBase64: string; from?: string; subject?: string }
-  | { type: "notice"; from?: string; subject: string; body?: string };
+  | { type: "notice"; from?: string; subject: string; body?: string }
+  | { type: "ping"; processed?: number; suspicious?: number };
 
 export async function POST(request: Request) {
   if (!bearerMatches(request, process.env.INGEST_SECRET)) return Response.json({ error: "não autorizado" }, { status: 401 });
@@ -28,7 +30,14 @@ export async function POST(request: Request) {
     return Response.json({ error: "JSON inválido" }, { status: 400 });
   }
 
+  // a página "Conectar Gmail" mostra quando o leitor falou com o site pela última vez
+  await setState(GMAIL_LAST_SEEN, true);
   try {
+    if (payload.type === "ping") {
+      const run: GmailRun = { processed: Number(payload.processed) || 0, suspicious: Number(payload.suspicious) || 0 };
+      await setState(GMAIL_LAST_RUN, run);
+      return Response.json({ ok: true });
+    }
     if (payload.type === "bill") {
       const bytes = new Uint8Array(Buffer.from(String(payload.contentBase64 ?? ""), "base64"));
       if (bytes.length > MAX_BODY || !isPdf(bytes)) return Response.json({ error: "o anexo não é um PDF válido" }, { status: 422 });

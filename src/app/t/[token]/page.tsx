@@ -292,10 +292,33 @@ export default async function TenantPage({ params }: { params: Promise<{ token: 
                       </span>
                       <div className="body">
                         <span className="title">{n.title}</span>
-                        {n.body && (
-                          <span className="text" style={{ whiteSpace: "pre-line" }}>
-                            {n.body}
-                          </span>
+                        {n.summary ? (
+                          <>
+                            <span className="text">{n.summary}</span>
+                            {n.eventInfo && (
+                              <span className="chip plain" style={{ justifySelf: "start" }}>
+                                <Icon name="calendar" size={13} />
+                                {n.eventInfo}
+                              </span>
+                            )}
+                            {n.body && (
+                              <details className="disclosure">
+                                <summary className="small">
+                                  <Icon name="chevron" size={14} />
+                                  Ver aviso completo
+                                </summary>
+                                <p className="inset small" style={{ whiteSpace: "pre-line", maxHeight: 280, overflow: "auto" }}>
+                                  {n.body}
+                                </p>
+                              </details>
+                            )}
+                          </>
+                        ) : (
+                          n.body && (
+                            <span className="text" style={{ whiteSpace: "pre-line" }}>
+                              {n.body}
+                            </span>
+                          )
                         )}
                         <span className="tiny">
                           {n.provider ? `${PROVIDER_META[n.provider].company} · ` : ""}

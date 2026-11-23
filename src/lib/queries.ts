@@ -138,3 +138,27 @@ export async function photosForProperty(propertyId: number) {
     .where(eq(schema.photos.propertyId, propertyId))
     .orderBy(asc(schema.photos.position), asc(schema.photos.id));
 }
+
+/** Avisos de e-mail já publicados para algum imóvel (histórico das notificações) */
+export async function publishedEmailNotices(limit = 15) {
+  const db = await getDb();
+  return db
+    .select({ notice: schema.notices, propertyName: schema.properties.name })
+    .from(schema.notices)
+    .innerJoin(schema.properties, eq(schema.notices.propertyId, schema.properties.id))
+    .where(eq(schema.notices.source, "email"))
+    .orderBy(desc(schema.notices.createdAt))
+    .limit(limit);
+}
+
+/** Contagem do sino do painel: o que espera uma ação do proprietário */
+export async function pendingCounts() {
+  const db = await getDb();
+  const count = sql<number>`COUNT(*)`;
+  const [[notices], [review], [payments]] = await Promise.all([
+    db.select({ c: count }).from(schema.notices).where(isNull(schema.notices.propertyId)),
+    db.select({ c: count }).from(b).where(and(isNotNull(b.reviewReason), isNotNull(b.propertyId))),
+    db.select({ c: count }).from(b).where(eq(b.status, "informado")),
+  ]);
+  return { notices: notices.c, review: review.c, payments: payments.c, total: notices.c + review.c + payments.c };
+}

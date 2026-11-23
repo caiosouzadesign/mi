@@ -37,3 +37,20 @@ export function whatsappNumber(phone: string | null | undefined): string | null 
   if (digits.length < 10) return null;
   return digits.startsWith("55") && digits.length >= 12 ? digits : `55${digits}`;
 }
+
+/** Data do SQLite ("2026-11-23 14:05:00", UTC) ou ISO para Date */
+export function parseDbDate(value: string): Date {
+  return new Date(value.includes("T") ? value : `${value.replace(" ", "T")}Z`);
+}
+
+/** "agora", "há 5 min", "há 3 h", "ontem", "12/11" */
+export function timeAgo(value: string, now = new Date()): string {
+  const date = parseDbDate(value);
+  const minutes = Math.round((now.getTime() - date.getTime()) / 60_000);
+  if (minutes < 1) return "agora";
+  if (minutes < 60) return `há ${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `há ${hours} h`;
+  if (hours < 48) return "ontem";
+  return new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit" }).format(date);
+}

@@ -1,18 +1,21 @@
 /**
- * Contas do Imóvel — leitor do Gmail
+ * Script do Google Apps Script que lê o Gmail do proprietário e envia contas e
+ * avisos para o site. O painel (Conectar Gmail) entrega este texto já
+ * preenchido com o endereço do site e o INGEST_SECRET.
+ */
+export function gmailScript(siteUrl: string, secret: string): string {
+  return String.raw`/**
+ * Contas do Imóvel — leitor do Gmail (gerado pelo painel)
  *
- * Roda na sua conta Google (script.google.com), procura e-mails da Enel e da
- * Sabesp e envia os PDFs das contas (e os avisos sem PDF) para o seu site.
+ * Procura e-mails da Enel e da Sabesp e envia os PDFs das contas e os avisos
+ * para o seu site. Instalação: selecione a função "instalar" e clique em
+ * Executar; autorize o acesso ao Gmail quando o Google pedir.
  *
- * Como instalar (uma vez, pelo computador):
- *  1. Acesse https://script.google.com > Novo projeto e cole este arquivo.
- *  2. Preencha SITE_URL e INGEST_SECRET abaixo (o mesmo valor da Vercel).
- *  3. Selecione a função "instalar" e clique em Executar. Autorize o acesso ao Gmail.
- *     Isso cria um gatilho que roda a cada hora e já processa os e-mails dos últimos 60 dias.
+ * Não compartilhe este script: ele contém a chave secreta do seu site.
  */
 
-const SITE_URL = "https://SEU-SITE.vercel.app"; // sem barra no final
-const INGEST_SECRET = "cole-aqui-o-INGEST_SECRET";
+const SITE_URL = ${JSON.stringify(siteUrl.replace(/\/$/, ""))};
+const INGEST_SECRET = ${JSON.stringify(secret)};
 
 // Domínios oficiais. Só e-mails AUTENTICADOS (DMARC/DKIM) desses domínios são
 // importados. Se uma conta verdadeira cair no marcador "contas-suspeitas",
@@ -24,16 +27,24 @@ const QUERY =
 const LABEL = "contas-processadas";
 const LABEL_SUSPEITO = "contas-suspeitas";
 
+/** Rode uma vez: cria a rotina de hora em hora e já processa os últimos 60 dias */
 function instalar() {
   ScriptApp.getProjectTriggers().forEach((t) => ScriptApp.deleteTrigger(t));
   ScriptApp.newTrigger("processarEmails").timeBased().everyHours(1).create();
   processarEmails();
 }
 
+/** Só testa a conexão com o site (o painel mostra "Conectado") */
+function testar() {
+  console.log(enviar({ type: "ping", processed: 0, suspicious: 0 }) ? "Conectado ao site!" : "Falhou: confira SITE_URL e INGEST_SECRET");
+}
+
 function processarEmails() {
   const label = GmailApp.getUserLabelByName(LABEL) || GmailApp.createLabel(LABEL);
   const suspeito = GmailApp.getUserLabelByName(LABEL_SUSPEITO) || GmailApp.createLabel(LABEL_SUSPEITO);
   const threads = GmailApp.search(QUERY, 0, 30);
+  let processados = 0;
+  let suspeitos = 0;
 
   threads.forEach((thread) => {
     let ok = true;
@@ -67,10 +78,16 @@ function processarEmails() {
           }) && ok;
       }
     });
-    if (suspeita) thread.addLabel(suspeito);
-    // só marca como processado se tudo deu certo; senão tenta de novo na próxima hora
-    else if (ok) thread.addLabel(label);
+    if (suspeita) {
+      thread.addLabel(suspeito);
+      suspeitos++;
+    } else if (ok) {
+      // só marca como processado se tudo deu certo; senão tenta de novo na próxima hora
+      thread.addLabel(label);
+      processados++;
+    }
   });
+  enviar({ type: "ping", processed: processados, suspicious: suspeitos });
 }
 
 /** Domínio do remetente visível ("Fulano <contas@enel.com>" -> "enel.com") */
@@ -119,4 +136,6 @@ function enviar(payload) {
   console.log(payload.type, payload.subject, code, res.getContentText().slice(0, 300));
   // 422 = PDF ilegível (ex.: senha); não adianta tentar de novo
   return code === 200 || code === 422;
+}
+`;
 }

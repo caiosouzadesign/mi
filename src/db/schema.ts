@@ -70,6 +70,12 @@ export const notices = sqliteTable("notices", {
   provider: text("provider", { enum: ["enel", "sabesp"] }),
   title: text("title").notNull(),
   body: text("body"),
+  /** resumo curto, estilo notificação (avisos vindos de e-mail) */
+  summary: text("summary"),
+  /** quando o aviso acontece, se houver (ex.: "05/12, das 8h às 17h") */
+  eventInfo: text("event_info"),
+  /** "ia" (Claude) ou "auto" (resumo simples, sem IA) */
+  summarySource: text("summary_source"),
   source: text("source").notNull().default("manual"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
@@ -112,6 +118,13 @@ export const photos = sqliteTable("photos", {
   height: integer("height"),
   position: integer("position").notNull().default(0),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+/** Estado simples do sistema (ex.: último contato do leitor do Gmail) */
+export const appState = sqliteTable("app_state", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: text("updated_at").notNull(),
 });
 
 /** Tentativas de login com erro, para bloquear adivinhação de senha */
@@ -183,6 +196,9 @@ export const SCHEMA_SQL = [
     provider TEXT,
     title TEXT NOT NULL,
     body TEXT,
+    summary TEXT,
+    event_info TEXT,
+    summary_source TEXT,
     source TEXT NOT NULL DEFAULT 'manual',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`,
@@ -218,6 +234,11 @@ export const SCHEMA_SQL = [
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`,
   `CREATE INDEX IF NOT EXISTS photos_property_idx ON photos(property_id, position)`,
+  `CREATE TABLE IF NOT EXISTS app_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS auth_attempts (
     key TEXT PRIMARY KEY,
     failures INTEGER NOT NULL DEFAULT 0,
@@ -235,4 +256,7 @@ export const ADDED_COLUMNS: { table: string; column: string; type: string }[] = 
   { table: "bills", column: "due_reminded_at", type: "TEXT" },
   { table: "bills", column: "review_reason", type: "TEXT" },
   { table: "notices", column: "suggested_property_id", type: "INTEGER" },
+  { table: "notices", column: "summary", type: "TEXT" },
+  { table: "notices", column: "event_info", type: "TEXT" },
+  { table: "notices", column: "summary_source", type: "TEXT" },
 ];

@@ -67,13 +67,16 @@ Para gerar textos aleatórios: https://www.random.org/strings/ ou `openssl rand 
 
 3. Faça o deploy. As tabelas são criadas sozinhas no primeiro acesso.
 
-### 4. Leitor do Gmail (Google Apps Script)
-1. Abra https://script.google.com › **Novo projeto**.
-2. Cole o conteúdo de [`scripts/gmail-apps-script.gs`](scripts/gmail-apps-script.gs).
-3. Preencha `SITE_URL` (endereço da Vercel) e `INGEST_SECRET` (mesmo valor do passo 3).
-4. Escolha a função **`instalar`** › **Executar** › autorize o acesso ao Gmail.
+### 4. Conecte o Gmail (Google Apps Script)
+No painel do site publicado, clique no ícone de envelope no topo (**Conectar Gmail**). A página tem o passo a passo e o botão **Copiar script**, que já vem preenchido com o endereço do seu site e o `INGEST_SECRET`. Em resumo:
+1. Abra https://script.google.com com o Gmail que recebe as contas › **Novo projeto**.
+2. Apague o texto do editor, cole o script e salve.
+3. Escolha a função **`instalar`** › **Executar** › **Revisar permissões** › **Avançado** › **Acessar (não seguro)** › **Permitir**. O aviso “O Google não verificou este app” é normal: o app é seu.
+4. Volte à página **Conectar Gmail**: o quadro fica verde com **Conectado**.
 
-Ele processa os e-mails dos últimos 60 dias e passa a rodar de hora em hora. E-mails já lidos recebem o marcador `contas-processadas`.
+Ele processa os e-mails dos últimos 60 dias e passa a rodar de hora em hora. E-mails lidos recebem o marcador `contas-processadas`; falsificados, `contas-suspeitas`.
+
+**Avisos resumidos (opcional):** os avisos que chegam por e-mail (falta de água, desligamento, reajuste...) aparecem no **sino de notificações** do painel como uma notificação curta, com data e horário em destaque. Sem configurar nada, o resumo é simples. Para resumos feitos por IA, cadastre `ANTHROPIC_API_KEY` (crie em https://console.anthropic.com) na Vercel: o texto dos avisos (não as contas) é enviado à API do Claude só para gerar o resumo; custa centavos por aviso.
 
 ### 5. Cadastre os imóveis
 Em `/admin` › **Cadastrar imóvel**: nome, inquilino, WhatsApp, **nº da instalação Enel** e **RGI Sabesp**. Depois use **Enviar link no WhatsApp**.
@@ -163,4 +166,5 @@ Estrutura:
 - `src/app/api/cron/diario` — rotina diária (lembretes + assinaturas pendentes)
 - `src/app/api/webhooks/assinatura` — retorno da ZapSign
 - `src/app/api/ingest` — recebe contas e avisos do Apps Script
-- `scripts/gmail-apps-script.gs` — leitor do Gmail
+- `src/lib/gmail-script.ts` — leitor do Gmail (Apps Script entregue em Conectar Gmail)
+- `src/lib/summarize.ts` — resumo dos avisos (Claude, com resumo simples de reserva)

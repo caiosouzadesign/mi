@@ -4,7 +4,7 @@
  */
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/db";
-import { ingestBillPdf } from "@/lib/ingest";
+import { ingestBillPdf, ingestNotice } from "@/lib/ingest";
 import { newToken } from "@/lib/tokens";
 import { makeFormattedDigitable, makePdf } from "../tests/helpers";
 
@@ -108,12 +108,16 @@ async function main() {
     }
     console.log(`${property.name}: http://localhost:3000/t/${property.accessToken}`);
   }
-  await db.insert(schema.notices).values({
-    propertyId: null,
-    provider: "sabesp",
-    title: "Manutenção programada na rede — possível falta de água",
-    body: "A Sabesp informa manutenção na rede de distribuição no dia 05, das 8h às 17h.",
-    source: "email",
+  // avisos chegando por e-mail (resumidos sem IA na demonstração)
+  await ingestNotice({
+    from: "Sabesp <avisos@sabesp.com.br>",
+    subject: "[Sabesp] Aviso de manutenção programada na rede - RGI 9876543210-1",
+    body: "Prezado cliente,\n\nA Sabesp informa que realizará manutenção na rede de distribuição da Rua Modelo e arredores no dia 05/12/2026, das 8h às 17h.\nDurante o serviço poderá haver falta de água. A previsão de retorno do abastecimento é às 22h.\nRecomendamos manter a caixa d'água abastecida.\n\nBaixe o app Sabesp Mobile.\nEste e-mail é automático, não responda.",
+  });
+  await ingestNotice({
+    from: "Enel <comunicados@enel.com>",
+    subject: "Desligamento programado para melhoria da rede - instalação 11223344",
+    body: "Olá! Para melhorar o fornecimento de energia na sua região, faremos um desligamento programado no dia 09/12/2026 das 9h às 13h.\nO serviço é necessário para a troca de equipamentos da rede.\nRecomendamos desligar aparelhos sensíveis da tomada.\nPolítica de privacidade | Descadastrar",
   });
 }
 

@@ -17,8 +17,10 @@ import { Money } from "@/components/Money";
 import { PropertyFields } from "@/components/PropertyFields";
 import { StatusButtons } from "@/components/StatusButtons";
 import { SubmitButton } from "@/components/SubmitButton";
-import { approveBill, assignBill, assignNotice, createProperty, deleteBill, deleteNotice } from "./actions";
+import { approveBill, assignBill, createProperty, deleteBill } from "./actions";
 import { UploadForm } from "./UploadForm";
+import { NoticeNotification } from "@/components/NoticeNotification";
+import { GMAIL_LAST_SEEN, getState } from "@/lib/app-state";
 import { emailConfigured } from "@/lib/notify";
 import { billWhatsappLink } from "@/lib/whatsapp";
 
@@ -28,12 +30,13 @@ export const metadata = { title: "Painel · Contas do Imóvel" };
 export default async function AdminPage() {
   await requireAdmin();
   const db = await getDb();
-  const [properties, orphanBills, orphanNotices, base, inReview] = await Promise.all([
+  const [properties, orphanBills, orphanNotices, base, inReview, gmail] = await Promise.all([
     db.select().from(schema.properties).orderBy(desc(schema.properties.id)),
     unassignedBills(),
     unassignedNotices(),
     baseUrl(),
     billsInReview(),
+    getState<boolean>(GMAIL_LAST_SEEN),
   ]);
   const withBills = await Promise.all(properties.map(async (p) => ({ property: p, bills: await billsForProperty(p.id) })));
   const allBills = withBills.flatMap((w) => w.bills);
@@ -76,6 +79,19 @@ export default async function AdminPage() {
             </div>
           ))}
         </section>
+
+        {!gmail && (
+          <Link href="/admin/conectar-gmail" className="alert-card" style={{ color: "inherit", textDecoration: "none" }}>
+            <span className="tile sm info">
+              <Icon name="mail" size={18} />
+            </span>
+            <div className="body grow">
+              <span className="title">Conecte seu Gmail</span>
+              <span className="text">Para as contas e os avisos da Enel e da Sabesp chegarem sozinhos. Leva uns 5 minutos.</span>
+            </div>
+            <Icon name="chevron" size={18} />
+          </Link>
+        )}
 
         {inReview.length > 0 && (
           <section className="card" style={{ borderColor: "color-mix(in srgb, var(--bad) 35%, transparent)" }}>
@@ -281,41 +297,16 @@ export default async function AdminPage() {
         )}
 
         {orphanNotices.length > 0 && (
-          <section className="card">
-            <div className="stack-sm">
-              <h2>Avisos recebidos por e-mail</h2>
-              <p className="small muted">Só aparecem para o inquilino depois que você publica.</p>
+          <section className="stack" aria-label="Notificações">
+            <div className="section-title">
+              <h2>Notificações</h2>
+              <Link className="small" href="/admin/notificacoes">
+                Ver todas ({orphanNotices.length})
+              </Link>
             </div>
-            <div className="list">
-              {orphanNotices.map((n) => (
-                <div key={n.id} className="list-row" style={{ alignItems: "flex-start", flexWrap: "wrap" }}>
-                  <span className={`tile sm ${n.provider ?? "info"}`}>
-                    <Icon name={n.provider ? PROVIDER_META[n.provider].icon : "bell"} size={17} />
-                  </span>
-                  <div className="meta" style={{ flexBasis: 220 }}>
-                    <span className="title">{n.title}</span>
-                    {n.body && <span className="small muted" style={{ whiteSpace: "pre-line" }}>{n.body}</span>}
-                    <span className="tiny">{brDate(n.createdAt)}</span>
-                  </div>
-                  <div className="row" style={{ flexWrap: "nowrap" }}>
-                    <form action={assignNotice.bind(null, n.id)} className="row" style={{ flexWrap: "nowrap" }}>
-                      <select name="propertyId" required defaultValue={n.suggestedPropertyId ?? ""} style={{ minWidth: 150, minHeight: 36, padding: "6px 34px 6px 12px" }}>
-                        <option value="">Mostrar para…</option>
-                        {properties.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name}
-                          </option>
-                        ))}
-                      </select>
-                      <SubmitButton className="btn sm">Publicar</SubmitButton>
-                    </form>
-                    <form action={deleteNotice.bind(null, n.id)}>
-                      <button className="icon-btn" type="submit" aria-label="Descartar aviso" title="Descartar">
-                        <Icon name="x" size={17} />
-                      </button>
-                    </form>
-                  </div>
-                </div>
+            <div className="notif-stack">
+              {orphanNotices.slice(0, 3).map((n) => (
+                <NoticeNotification key={n.id} notice={n} properties={properties} />
               ))}
             </div>
           </section>

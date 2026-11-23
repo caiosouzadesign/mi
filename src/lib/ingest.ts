@@ -6,6 +6,7 @@ import { normalize, parseBillText, textContainsCode, type Provider } from "./par
 import { pdfToText } from "./pdf";
 import { newToken } from "./tokens";
 import { reviewReasons } from "./fraud";
+import { summarizeNotice } from "./summarize";
 
 export interface IngestResult {
   status: "created" | "duplicate";
@@ -124,10 +125,21 @@ export async function ingestNotice(input: { from?: string; subject: string; body
     .select({ id: schema.properties.id, enelInstallation: schema.properties.enelInstallation, sabespCode: schema.properties.sabespCode })
     .from(schema.properties);
   const suggestedPropertyId = matchProperty(`${input.subject}\n${body}`, provider, all);
+  const summary = await summarizeNotice({ subject: input.subject, body, provider });
   // avisos de e-mail nunca aparecem direto para o inquilino: o proprietário publica
   const [row] = await db
     .insert(schema.notices)
-    .values({ propertyId: null, suggestedPropertyId, provider, title: input.subject.slice(0, 200), body, source: "email" })
+    .values({
+      propertyId: null,
+      suggestedPropertyId,
+      provider,
+      title: summary.title || input.subject.slice(0, 200),
+      body,
+      summary: summary.summary,
+      eventInfo: summary.eventInfo,
+      summarySource: summary.source,
+      source: "email",
+    })
     .returning({ id: schema.notices.id });
-  return { noticeId: row.id, suggestedPropertyId, provider };
+  return { noticeId: row.id, suggestedPropertyId, provider, summary: summary.source };
 }
